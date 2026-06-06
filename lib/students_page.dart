@@ -603,6 +603,19 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
       }
 
       final classId = buildStudentClassId(course);
+      final courseData = {
+        'id': selectedCourse.id,
+        'courseId': selectedCourse.id,
+        'name': course,
+        'course': course,
+        'grade': grade,
+        'classId': classId,
+        'classFee': selectedCourse.classFee,
+        'type': selectedCourse.type,
+        'classType': selectedCourse.type,
+        'location': selectedCourse.location,
+        'status': 'active',
+      };
       final qrPayload = buildStudentQrPayload(
         studentId: studentUser.uid,
         name: name,
@@ -633,6 +646,9 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         'classFee': selectedCourse.classFee,
         'classType': selectedCourse.type,
         'location': selectedCourse.location,
+        'courseIds': [selectedCourse.id],
+        'courses': [courseData],
+        'enrolledCourses': [courseData],
         'qrPayload': qrPayload,
         'qrVersion': 1,
         'role': 'student',
@@ -1267,7 +1283,7 @@ class _StudentProfile {
       name: _readString(data, 'name', 'Unnamed Student'),
       email: _readString(data, 'email', ''),
       grade: _readString(data, 'grade', ''),
-      course: _readString(data, 'course', fallbackCourse),
+      course: _courseSummary(data, fallbackCourse),
       role: _readString(data, 'role', 'student'),
       status: _readString(data, 'status', 'active'),
     );
@@ -1280,6 +1296,63 @@ class _StudentProfile {
   ) {
     final value = data[key]?.toString().trim();
     return value?.isNotEmpty == true ? value! : fallback;
+  }
+
+  static String _courseSummary(
+    Map<String, dynamic> data,
+    String fallback,
+  ) {
+    final names = <String>[];
+
+    void addName(String value) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) {
+        return;
+      }
+
+      final exists = names.any(
+        (name) => name.toLowerCase() == normalized.toLowerCase(),
+      );
+      if (!exists) {
+        names.add(normalized);
+      }
+    }
+
+    void addFromField(String field) {
+      final value = data[field];
+      if (value is! Iterable) {
+        return;
+      }
+
+      for (final item in value) {
+        if (item is! Map) {
+          continue;
+        }
+
+        final courseData = <String, dynamic>{};
+        item.forEach((key, value) {
+          courseData[key.toString()] = value;
+        });
+
+        addName(
+          _readString(
+            courseData,
+            'name',
+            _readString(courseData, 'course', ''),
+          ),
+        );
+      }
+    }
+
+    addFromField('courses');
+    addFromField('enrolledCourses');
+    addFromField('studentCourses');
+
+    if (names.isEmpty) {
+      addName(_readString(data, 'course', fallback));
+    }
+
+    return names.isEmpty ? fallback : names.join(', ');
   }
 
   String get subtitle {

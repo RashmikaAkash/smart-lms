@@ -1,10 +1,15 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'create_course_sheet.dart';
+import 'dashboard_reports_sheet.dart';
 import 'courses_page.dart';
+import 'profile_page.dart';
 import 'scan_attendance_page.dart';
+import 'scan_payment_page.dart';
 import 'students_page.dart';
+import 'upload_material_sheet.dart';
 
 class TeacherDashboard extends StatefulWidget {
   const TeacherDashboard({super.key, this.userData = const {}});
@@ -54,11 +59,6 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
   }
 
   void _selectTab(int index) {
-    if (index == 4) {
-      FirebaseAuth.instance.signOut();
-      return;
-    }
-
     if (_selectedIndex == index) {
       return;
     }
@@ -97,6 +97,8 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
                     greeting: _greeting,
                     name: _name,
                     initials: _initials,
+                    onProfilePressed: () => _selectTab(4),
+                    onCoursesPressed: () => _selectTab(2),
                   ),
                   const StudentsPage(
                     showBackButton: false,
@@ -110,6 +112,7 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
                     message: 'Payments section coming soon.',
                     icon: Icons.credit_card_rounded,
                   ),
+                  ProfilePage(userData: widget.userData),
                 ],
               ),
             ),
@@ -129,11 +132,15 @@ class _DashboardHome extends StatelessWidget {
     required this.greeting,
     required this.name,
     required this.initials,
+    required this.onProfilePressed,
+    required this.onCoursesPressed,
   });
 
   final String greeting;
   final String name;
   final String initials;
+  final VoidCallback onProfilePressed;
+  final VoidCallback onCoursesPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -145,6 +152,7 @@ class _DashboardHome extends StatelessWidget {
             greeting: greeting,
             name: name,
             initials: initials,
+            onProfilePressed: onProfilePressed,
           ),
           Transform.translate(
             offset: const Offset(0, -18),
@@ -153,7 +161,9 @@ class _DashboardHome extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const _StatsGrid(),
+                  _StatsGrid(
+                    teacherUid: FirebaseAuth.instance.currentUser?.uid ?? '',
+                  ),
                   const SizedBox(height: 18),
                   const _SectionHeader(
                     title: 'Quick Actions',
@@ -166,10 +176,12 @@ class _DashboardHome extends StatelessWidget {
                   _SectionHeader(
                     title: "Today's Classes",
                     actionLabel: 'See all',
-                    onActionPressed: () {},
+                    onActionPressed: onCoursesPressed,
                   ),
                   const SizedBox(height: 10),
-                  const _ClassList(),
+                  _ClassList(
+                    teacherUid: FirebaseAuth.instance.currentUser?.uid ?? '',
+                  ),
                   const SizedBox(height: 20),
                 ],
               ),
@@ -232,11 +244,13 @@ class _Header extends StatelessWidget {
     required this.greeting,
     required this.name,
     required this.initials,
+    required this.onProfilePressed,
   });
 
   final String greeting;
   final String name;
   final String initials;
+  final VoidCallback onProfilePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -292,12 +306,10 @@ class _Header extends StatelessWidget {
               ),
               const SizedBox(width: 4),
               Tooltip(
-                message: 'Logout',
+                message: 'Profile',
                 child: InkWell(
                   borderRadius: BorderRadius.circular(22),
-                  onTap: () async {
-                    await FirebaseAuth.instance.signOut();
-                  },
+                  onTap: onProfilePressed,
                   child: Container(
                     width: 42,
                     height: 42,
@@ -327,41 +339,8 @@ class _Header extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white.withOpacity(0.2)),
             ),
-            child: const Row(
-              children: [
-                Icon(
-                  Icons.access_time_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Today - Wednesday, 5 June',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      SizedBox(height: 3),
-                      Text(
-                        'Next class: Mathematics 10A - 10:00 AM',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: _NextClassBanner(
+              teacherUid: FirebaseAuth.instance.currentUser?.uid ?? '',
             ),
           ),
         ],
@@ -371,7 +350,57 @@ class _Header extends StatelessWidget {
 }
 
 class _StatsGrid extends StatelessWidget {
-  const _StatsGrid();
+  const _StatsGrid({required this.teacherUid});
+
+  final String teacherUid;
+
+  @override
+  Widget build(BuildContext context) {
+    if (teacherUid.isEmpty) {
+      return const _StatsCards(stats: _DashboardStats.empty());
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('users')
+          .where('createdBy', isEqualTo: teacherUid)
+          .snapshots(),
+      builder: (context, studentsSnapshot) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('teacher_courses')
+              .doc(teacherUid)
+              .collection('courses')
+              .snapshots(),
+          builder: (context, coursesSnapshot) {
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('teacher_attendance')
+                  .doc(teacherUid)
+                  .collection('scans')
+                  .where('dateKey', isEqualTo: _dateKey(DateTime.now()))
+                  .snapshots(),
+              builder: (context, attendanceSnapshot) {
+                final stats = _DashboardStats.fromSnapshots(
+                  studentsSnapshot.data?.docs ?? [],
+                  coursesSnapshot.data?.docs ?? [],
+                  attendanceSnapshot.data?.docs ?? [],
+                );
+
+                return _StatsCards(stats: stats);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _StatsCards extends StatelessWidget {
+  const _StatsCards({required this.stats});
+
+  final _DashboardStats stats;
 
   @override
   Widget build(BuildContext context) {
@@ -382,42 +411,42 @@ class _StatsGrid extends StatelessWidget {
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
       childAspectRatio: 1.12,
-      children: const [
+      children: [
         _StatCard(
           icon: Icons.groups_2_outlined,
-          iconColor: Color(0xFF316DFF),
-          iconBackground: Color(0xFFEAF0FF),
-          value: '247',
+          iconColor: const Color(0xFF316DFF),
+          iconBackground: const Color(0xFFEAF0FF),
+          value: '${stats.totalStudents}',
           label: 'Total Students',
-          trend: '+12 this month',
-          trendColor: Color(0xFF00A86B),
+          trend: '${stats.activeStudents} active',
+          trendColor: const Color(0xFF00A86B),
         ),
         _StatCard(
           icon: Icons.insights_rounded,
-          iconColor: Color(0xFF0FAF75),
-          iconBackground: Color(0xFFE7F9F0),
-          value: '89%',
+          iconColor: const Color(0xFF0FAF75),
+          iconBackground: const Color(0xFFE7F9F0),
+          value: '${stats.attendancePercent}%',
           label: "Today's Attendance",
-          trend: '+3% yesterday',
-          trendColor: Color(0xFF00A86B),
+          trend: '${stats.presentToday}/${stats.totalStudents} present',
+          trendColor: const Color(0xFF00A86B),
         ),
         _StatCard(
           icon: Icons.attach_money_rounded,
-          iconColor: Color(0xFFFF9500),
-          iconBackground: Color(0xFFFFF3E0),
-          value: 'Rs 84k',
+          iconColor: const Color(0xFFFF9500),
+          iconBackground: const Color(0xFFFFF3E0),
+          value: stats.revenueLabel,
           label: 'Monthly Revenue',
-          trend: '12 pending',
-          trendColor: Color(0xFFFF6B00),
+          trend: '${stats.pendingStudents} pending',
+          trendColor: const Color(0xFFFF6B00),
         ),
         _StatCard(
           icon: Icons.menu_book_rounded,
-          iconColor: Color(0xFF7048E8),
-          iconBackground: Color(0xFFF0ECFF),
-          value: '8',
+          iconColor: const Color(0xFF7048E8),
+          iconBackground: const Color(0xFFF0ECFF),
+          value: '${stats.activeCourses}',
           label: 'Active Courses',
-          trend: '2 starting soon',
-          trendColor: Color(0xFF00A86B),
+          trend: '${stats.scheduledToday} today',
+          trendColor: const Color(0xFF00A86B),
         ),
       ],
     );
@@ -572,6 +601,18 @@ class _QuickActionGrid extends StatelessWidget {
           },
         ),
         _ActionCard(
+          icon: Icons.payments_rounded,
+          iconColor: const Color(0xFF00A86B),
+          label: 'Scan Payment',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const ScanPaymentPage(),
+              ),
+            );
+          },
+        ),
+        _ActionCard(
           icon: Icons.add_rounded,
           iconColor: const Color(0xFF7048E8),
           label: 'Create Course',
@@ -584,15 +625,31 @@ class _QuickActionGrid extends StatelessWidget {
             );
           },
         ),
-        const _ActionCard(
+        _ActionCard(
           icon: Icons.upload_rounded,
-          iconColor: Color(0xFF0FAF75),
+          iconColor: const Color(0xFF0FAF75),
           label: 'Upload Material',
+          onTap: () {
+            showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => const UploadMaterialSheet(),
+            );
+          },
         ),
-        const _ActionCard(
+        _ActionCard(
           icon: Icons.bar_chart_rounded,
-          iconColor: Color(0xFFFF9500),
+          iconColor: const Color(0xFFFF9500),
           label: 'View Reports',
+          onTap: () {
+            showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => const DashboardReportsSheet(),
+            );
+          },
         ),
       ],
     );
@@ -651,45 +708,48 @@ class _ActionCard extends StatelessWidget {
 }
 
 class _ClassList extends StatelessWidget {
-  const _ClassList();
+  const _ClassList({required this.teacherUid});
+
+  final String teacherUid;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
-      children: [
-        _ClassTile(
-          icon: Icons.menu_book_rounded,
-          iconColor: Color(0xFF316DFF),
-          iconBackground: Color(0xFFEAF0FF),
-          subject: 'Mathematics 10A',
-          time: '10:00 AM - Room A1',
-          status: 'Live',
-          statusColor: Color(0xFF00A86B),
-          statusBackground: Color(0xFFE7F9F0),
-        ),
-        SizedBox(height: 10),
-        _ClassTile(
-          icon: Icons.science_rounded,
-          iconColor: Color(0xFF7048E8),
-          iconBackground: Color(0xFFF0ECFF),
-          subject: 'Physics 11',
-          time: '1:00 PM - Room B2',
-          status: 'Soon',
-          statusColor: Color(0xFFFF9500),
-          statusBackground: Color(0xFFFFF3E0),
-        ),
-        SizedBox(height: 10),
-        _ClassTile(
-          icon: Icons.biotech_rounded,
-          iconColor: Color(0xFF0FAF75),
-          iconBackground: Color(0xFFE7F9F0),
-          subject: 'Chemistry 12',
-          time: '3:30 PM - Room C3',
-          status: 'Later',
-          statusColor: Color(0xFF316DFF),
-          statusBackground: Color(0xFFEAF0FF),
-        ),
-      ],
+    if (teacherUid.isEmpty) {
+      return const _EmptyDashboardMessage(message: 'Teacher login needed.');
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('teacher_courses')
+          .doc(teacherUid)
+          .collection('courses')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const _EmptyDashboardMessage(message: 'Loading classes...');
+        }
+
+        final classes = (snapshot.data?.docs ?? [])
+            .map(_TodayClass.fromSnapshot)
+            .where((course) => course.isActive && course.isToday)
+            .toList()
+          ..sort((first, second) => first.sortTime.compareTo(second.sortTime));
+
+        if (classes.isEmpty) {
+          return const _EmptyDashboardMessage(
+            message: 'No classes scheduled for today.',
+          );
+        }
+
+        return Column(
+          children: [
+            for (var index = 0; index < classes.take(4).length; index++) ...[
+              if (index > 0) const SizedBox(height: 10),
+              _ClassTile.fromTodayClass(classes[index]),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -705,6 +765,21 @@ class _ClassTile extends StatelessWidget {
     required this.statusColor,
     required this.statusBackground,
   });
+
+  factory _ClassTile.fromTodayClass(_TodayClass course) {
+    final colors = course.statusColors;
+
+    return _ClassTile(
+      icon: Icons.menu_book_rounded,
+      iconColor: course.accentColor,
+      iconBackground: course.iconBackground,
+      subject: course.title,
+      time: course.timeAndLocation,
+      status: course.status,
+      statusColor: colors.$1,
+      statusBackground: colors.$2,
+    );
+  }
 
   final IconData icon;
   final Color iconColor;
@@ -786,6 +861,308 @@ class _ClassTile extends StatelessWidget {
   }
 }
 
+class _NextClassBanner extends StatelessWidget {
+  const _NextClassBanner({required this.teacherUid});
+
+  final String teacherUid;
+
+  @override
+  Widget build(BuildContext context) {
+    if (teacherUid.isEmpty) {
+      return const _NextClassBannerRow(
+        label: 'Today',
+        value: 'Teacher login needed',
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('teacher_courses')
+          .doc(teacherUid)
+          .collection('courses')
+          .snapshots(),
+      builder: (context, snapshot) {
+        final todayClasses = (snapshot.data?.docs ?? [])
+            .map(_TodayClass.fromSnapshot)
+            .where((course) => course.isActive && course.isToday)
+            .toList()
+          ..sort((first, second) => first.sortTime.compareTo(second.sortTime));
+
+        final nextClass = todayClasses.isEmpty ? null : todayClasses.first;
+        final todayLabel = 'Today - ${_fullDayName(DateTime.now())}';
+        final value = nextClass == null
+            ? 'No classes scheduled today'
+            : 'Next class: ${nextClass.title} - ${nextClass.scheduleTime}';
+
+        return _NextClassBannerRow(label: todayLabel, value: value);
+      },
+    );
+  }
+}
+
+class _NextClassBannerRow extends StatelessWidget {
+  const _NextClassBannerRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(
+          Icons.access_time_rounded,
+          color: Colors.white,
+          size: 20,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyDashboardMessage extends StatelessWidget {
+  const _EmptyDashboardMessage({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFDDE5F4)),
+      ),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFF60708F),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardStats {
+  const _DashboardStats({
+    required this.totalStudents,
+    required this.activeStudents,
+    required this.pendingStudents,
+    required this.presentToday,
+    required this.activeCourses,
+    required this.scheduledToday,
+    required this.monthlyRevenue,
+  });
+
+  const _DashboardStats.empty()
+      : totalStudents = 0,
+        activeStudents = 0,
+        pendingStudents = 0,
+        presentToday = 0,
+        activeCourses = 0,
+        scheduledToday = 0,
+        monthlyRevenue = 0;
+
+  final int totalStudents;
+  final int activeStudents;
+  final int pendingStudents;
+  final int presentToday;
+  final int activeCourses;
+  final int scheduledToday;
+  final double monthlyRevenue;
+
+  factory _DashboardStats.fromSnapshots(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> studentDocs,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> courseDocs,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> attendanceDocs,
+  ) {
+    final students = studentDocs
+        .where((doc) => doc.data()['role']?.toString() == 'student')
+        .toList();
+    final pendingStatuses = {'due', 'overdue', 'pending'};
+    final activeStudents = students
+        .where((doc) => doc.data()['status']?.toString() != 'archived')
+        .length;
+    final pendingStudents = students.where((doc) {
+      return pendingStatuses.contains(
+        (doc.data()['paymentStatus'] ?? doc.data()['status'] ?? '')
+            .toString()
+            .toLowerCase(),
+      );
+    }).length;
+    final revenue = students.fold<double>(0, (total, doc) {
+      return total + _readDouble(doc.data(), 'classFee');
+    });
+    final activeCourses = courseDocs
+        .where((doc) => doc.data()['status']?.toString() != 'archived')
+        .length;
+    final scheduledToday = courseDocs
+        .map(_TodayClass.fromSnapshot)
+        .where((course) => course.isActive && course.isToday)
+        .length;
+    final presentStudentIds = attendanceDocs
+        .map((doc) => doc.data()['studentId']?.toString() ?? '')
+        .where((studentId) => studentId.isNotEmpty)
+        .toSet();
+
+    return _DashboardStats(
+      totalStudents: students.length,
+      activeStudents: activeStudents,
+      pendingStudents: pendingStudents,
+      presentToday: presentStudentIds.length,
+      activeCourses: activeCourses,
+      scheduledToday: scheduledToday,
+      monthlyRevenue: revenue,
+    );
+  }
+
+  int get attendancePercent {
+    if (totalStudents == 0) {
+      return 0;
+    }
+    return ((presentToday / totalStudents) * 100).clamp(0, 100).round();
+  }
+
+  String get revenueLabel {
+    if (monthlyRevenue >= 1000) {
+      final value = monthlyRevenue / 1000;
+      final text = value == value.truncateToDouble()
+          ? value.toStringAsFixed(0)
+          : value.toStringAsFixed(1);
+      return 'Rs ${text}k';
+    }
+    return 'Rs ${monthlyRevenue.toStringAsFixed(0)}';
+  }
+}
+
+class _TodayClass {
+  const _TodayClass({
+    required this.id,
+    required this.name,
+    required this.grade,
+    required this.location,
+    required this.scheduleDays,
+    required this.scheduleTime,
+    required this.statusValue,
+  });
+
+  final String id;
+  final String name;
+  final String grade;
+  final String location;
+  final List<String> scheduleDays;
+  final String scheduleTime;
+  final String statusValue;
+
+  factory _TodayClass.fromSnapshot(
+    QueryDocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    final data = snapshot.data();
+    return _TodayClass(
+      id: snapshot.id,
+      name: _readString(data, 'name', 'Unnamed Course'),
+      grade: _readString(data, 'grade', ''),
+      location: _readString(data, 'location', ''),
+      scheduleDays: _readStringList(data, 'scheduleDays'),
+      scheduleTime: _readString(data, 'scheduleTime', ''),
+      statusValue: _readString(data, 'status', 'active'),
+    );
+  }
+
+  bool get isActive => statusValue != 'archived';
+
+  bool get isToday => scheduleDays.contains(_shortDayName(DateTime.now()));
+
+  int get sortTime => _minutesFromTime(scheduleTime) ?? 9999;
+
+  String get title => grade.isEmpty ? name : '$name $grade';
+
+  String get timeAndLocation {
+    final parts = <String>[
+      if (scheduleTime.isNotEmpty) scheduleTime,
+      if (location.isNotEmpty) location,
+    ];
+    return parts.isEmpty ? 'Schedule time not set' : parts.join(' • ');
+  }
+
+  String get status {
+    final minutes = _minutesFromTime(scheduleTime);
+    if (minutes == null) {
+      return 'Later';
+    }
+
+    final now = DateTime.now();
+    final currentMinutes = (now.hour * 60) + now.minute;
+
+    if (currentMinutes >= minutes && currentMinutes <= minutes + 90) {
+      return 'Live';
+    }
+    if (currentMinutes < minutes) {
+      return 'Soon';
+    }
+    return 'Done';
+  }
+
+  Color get accentColor {
+    final colors = [
+      const Color(0xFF316DFF),
+      const Color(0xFF7048E8),
+      const Color(0xFF0FAF75),
+      const Color(0xFFFF9500),
+    ];
+    return colors[id.hashCode.abs() % colors.length];
+  }
+
+  Color get iconBackground => accentColor.withOpacity(0.12);
+
+  (Color, Color) get statusColors {
+    switch (status) {
+      case 'Live':
+        return (const Color(0xFF00A86B), const Color(0xFFE7F9F0));
+      case 'Soon':
+        return (const Color(0xFFFF9500), const Color(0xFFFFF3E0));
+      case 'Done':
+        return (const Color(0xFF8B97AD), const Color(0xFFEFF2F7));
+      default:
+        return (const Color(0xFF316DFF), const Color(0xFFEAF0FF));
+    }
+  }
+}
+
 class _BottomNavigation extends StatelessWidget {
   const _BottomNavigation({
     required this.selectedIndex,
@@ -834,7 +1211,7 @@ class _BottomNavigation extends StatelessWidget {
           _BottomNavItem(
             icon: Icons.person_outline_rounded,
             label: 'Profile',
-            isActive: false,
+            isActive: selectedIndex == 4,
             onTap: () => onItemSelected(4),
           ),
         ],
@@ -899,4 +1276,93 @@ class _BottomNavItem extends StatelessWidget {
       ),
     );
   }
+}
+
+String _dateKey(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '${date.year}-$month-$day';
+}
+
+String _shortDayName(DateTime date) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return days[date.weekday - 1];
+}
+
+String _fullDayName(DateTime date) {
+  const days = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  return days[date.weekday - 1];
+}
+
+String _readString(
+  Map<String, dynamic> data,
+  String key,
+  String fallback,
+) {
+  final value = data[key]?.toString().trim();
+  return value?.isNotEmpty == true ? value! : fallback;
+}
+
+double _readDouble(Map<String, dynamic> data, String key) {
+  final value = data[key];
+  if (value is num) {
+    return value.toDouble();
+  }
+  return double.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+List<String> _readStringList(Map<String, dynamic> data, String key) {
+  final value = data[key];
+  if (value is Iterable) {
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+  return const [];
+}
+
+int? _minutesFromTime(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  final match = RegExp(
+    r'^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$',
+    caseSensitive: false,
+  ).firstMatch(trimmed);
+
+  if (match == null) {
+    return null;
+  }
+
+  var hour = int.tryParse(match.group(1) ?? '');
+  final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+  final period = match.group(3)?.toUpperCase();
+
+  if (hour == null || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  if (period == 'PM' && hour < 12) {
+    hour += 12;
+  }
+  if (period == 'AM' && hour == 12) {
+    hour = 0;
+  }
+
+  if (hour < 0 || hour > 23) {
+    return null;
+  }
+
+  return (hour * 60) + minute;
 }

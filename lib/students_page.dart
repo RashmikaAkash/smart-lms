@@ -8,7 +8,14 @@ import 'student_detail_page.dart';
 import 'student_qr.dart';
 
 class StudentsPage extends StatefulWidget {
-  const StudentsPage({super.key});
+  const StudentsPage({
+    super.key,
+    this.showBackButton = true,
+    this.showBottomNavigation = true,
+  });
+
+  final bool showBackButton;
+  final bool showBottomNavigation;
 
   @override
   State<StudentsPage> createState() => _StudentsPageState();
@@ -17,14 +24,6 @@ class StudentsPage extends StatefulWidget {
 class _StudentsPageState extends State<StudentsPage> {
   final TextEditingController _searchController = TextEditingController();
   String _selectedCourse = 'All';
-
-  static const List<String> _courses = [
-    'All',
-    'Mathematics',
-    'Physics',
-    'Chemistry',
-    'English',
-  ];
 
   Stream<QuerySnapshot<Map<String, dynamic>>>? get _studentsStream {
     final teacher = FirebaseAuth.instance.currentUser;
@@ -35,6 +34,19 @@ class _StudentsPageState extends State<StudentsPage> {
     return FirebaseFirestore.instance
         .collection('users')
         .where('createdBy', isEqualTo: teacher.uid)
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>>? get _coursesStream {
+    final teacher = FirebaseAuth.instance.currentUser;
+    if (teacher == null) {
+      return null;
+    }
+
+    return FirebaseFirestore.instance
+        .collection('teacher_courses')
+        .doc(teacher.uid)
+        .collection('courses')
         .snapshots();
   }
 
@@ -99,7 +111,10 @@ class _StudentsPageState extends State<StudentsPage> {
       body: SafeArea(
         child: Column(
           children: [
-            _StudentsTopBar(onAddPressed: _openRegisterSheet),
+            _StudentsTopBar(
+              showBackButton: widget.showBackButton,
+              onAddPressed: _openRegisterSheet,
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
               child: _SearchBox(controller: _searchController),
@@ -107,22 +122,13 @@ class _StudentsPageState extends State<StudentsPage> {
             const SizedBox(height: 12),
             SizedBox(
               height: 38,
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                scrollDirection: Axis.horizontal,
-                itemCount: _courses.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  final course = _courses[index];
-                  return _SubjectChip(
-                    label: course,
-                    isSelected: course == _selectedCourse,
-                    onTap: () {
-                      setState(() {
-                        _selectedCourse = course;
-                      });
-                    },
-                  );
+              child: _CourseFilterChips(
+                coursesStream: _coursesStream,
+                selectedCourse: _selectedCourse,
+                onSelected: (course) {
+                  setState(() {
+                    _selectedCourse = course;
+                  });
                 },
               ),
             ),
@@ -203,7 +209,7 @@ class _StudentsPageState extends State<StudentsPage> {
                 },
               ),
             ),
-            const _StudentsBottomNavigation(),
+            if (widget.showBottomNavigation) const _StudentsBottomNavigation(),
           ],
         ),
       ),
@@ -212,8 +218,12 @@ class _StudentsPageState extends State<StudentsPage> {
 }
 
 class _StudentsTopBar extends StatelessWidget {
-  const _StudentsTopBar({required this.onAddPressed});
+  const _StudentsTopBar({
+    required this.showBackButton,
+    required this.onAddPressed,
+  });
 
+  final bool showBackButton;
   final VoidCallback onAddPressed;
 
   @override
@@ -228,12 +238,15 @@ class _StudentsTopBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Back',
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: const Color(0xFF0D1B38),
-          ),
+          if (showBackButton)
+            IconButton(
+              tooltip: 'Back',
+              onPressed: () => Navigator.of(context).maybePop(),
+              icon: const Icon(Icons.arrow_back_rounded),
+              color: const Color(0xFF0D1B38),
+            )
+          else
+            const SizedBox(width: 14),
           const Expanded(
             child: Text(
               'Students',
@@ -347,6 +360,58 @@ class _SubjectChip extends StatelessWidget {
   }
 }
 
+class _CourseFilterChips extends StatelessWidget {
+  const _CourseFilterChips({
+    required this.coursesStream,
+    required this.selectedCourse,
+    required this.onSelected,
+  });
+
+  final Stream<QuerySnapshot<Map<String, dynamic>>>? coursesStream;
+  final String selectedCourse;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (coursesStream == null) {
+      return _buildList(const ['All']);
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: coursesStream,
+      builder: (context, snapshot) {
+        final courseNames = (snapshot.data?.docs ?? [])
+            .map(_TeacherCourse.fromSnapshot)
+            .where((course) => course.status != 'archived')
+            .map((course) => course.name)
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+
+        return _buildList(['All', ...courseNames]);
+      },
+    );
+  }
+
+  Widget _buildList(List<String> courses) {
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      scrollDirection: Axis.horizontal,
+      itemCount: courses.length,
+      separatorBuilder: (_, __) => const SizedBox(width: 10),
+      itemBuilder: (context, index) {
+        final course = courses[index];
+        return _SubjectChip(
+          label: course,
+          isSelected: course == selectedCourse,
+          onTap: () => onSelected(course),
+        );
+      },
+    );
+  }
+}
+
 class _StudentTile extends StatelessWidget {
   const _StudentTile({
     required this.student,
@@ -449,9 +514,10 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _gradeController = TextEditingController();
-  final TextEditingController _courseController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  _TeacherCourse? _selectedCourse;
+  String? _selectedCourseId;
   bool _isSaving = false;
   bool _hidePassword = true;
   String? _errorMessage;
@@ -463,9 +529,21 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
     _nameController.dispose();
     _emailController.dispose();
     _gradeController.dispose();
-    _courseController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>>? get _teacherCoursesStream {
+    final teacher = FirebaseAuth.instance.currentUser;
+    if (teacher == null) {
+      return null;
+    }
+
+    return FirebaseFirestore.instance
+        .collection('teacher_courses')
+        .doc(teacher.uid)
+        .collection('courses')
+        .snapshots();
   }
 
   Future<FirebaseAuth> _registrationAuth() async {
@@ -503,10 +581,15 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         throw StateError('Teacher is not signed in.');
       }
 
+      final selectedCourse = _selectedCourse;
+      if (selectedCourse == null) {
+        throw StateError('Course is not selected.');
+      }
+
       final name = _nameController.text.trim();
       final email = _emailController.text.trim();
-      final grade = _gradeController.text.trim();
-      final course = _courseController.text.trim();
+      final grade = selectedCourse.grade;
+      final course = selectedCourse.name;
       final password = _passwordController.text;
 
       registrationAuth = await _registrationAuth();
@@ -527,6 +610,10 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         grade: grade,
         course: course,
         teacherUid: teacher.uid,
+        courseId: selectedCourse.id,
+        classFee: selectedCourse.classFee,
+        classType: selectedCourse.type,
+        location: selectedCourse.location,
       );
 
       await studentUser.updateDisplayName(name);
@@ -539,9 +626,13 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         'name': name,
         'email': email,
         'grade': grade,
+        'courseId': selectedCourse.id,
         'course': course,
         'subject': course,
         'classId': classId,
+        'classFee': selectedCourse.classFee,
+        'classType': selectedCourse.type,
+        'location': selectedCourse.location,
         'qrPayload': qrPayload,
         'qrVersion': 1,
         'role': 'student',
@@ -647,9 +738,8 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   }
 
   String? _validateCourse(String? value) {
-    final course = value?.trim() ?? '';
-    if (course.isEmpty) {
-      return 'Course එක දාන්න.';
+    if (value == null || value.isEmpty) {
+      return 'Course එකක් select කරන්න.';
     }
     return null;
   }
@@ -659,6 +749,97 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
       return 'Password characters 6කට වැඩි වෙන්න ඕන.';
     }
     return null;
+  }
+
+  Widget _buildCourseDropdown() {
+    final coursesStream = _teacherCoursesStream;
+    if (coursesStream == null) {
+      return DropdownButtonFormField<String>(
+        items: const [],
+        onChanged: null,
+        validator: _validateCourse,
+        decoration: _inputDecoration(
+          label: 'Course',
+          icon: Icons.menu_book_outlined,
+        ),
+        hint: const Text('Teacher login needed'),
+      );
+    }
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: coursesStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return TextFormField(
+            enabled: false,
+            decoration: _inputDecoration(
+              label: 'Loading courses...',
+              icon: Icons.menu_book_outlined,
+            ),
+          );
+        }
+
+        final courses = (snapshot.data?.docs ?? [])
+            .map(_TeacherCourse.fromSnapshot)
+            .where((course) => course.status != 'archived')
+            .toList()
+          ..sort((first, second) => first.name.compareTo(second.name));
+        final selectedValue = courses.any(
+          (course) => course.id == _selectedCourseId,
+        )
+            ? _selectedCourseId
+            : null;
+
+        if (courses.isEmpty) {
+          return DropdownButtonFormField<String>(
+            items: const [],
+            onChanged: null,
+            validator: _validateCourse,
+            decoration: _inputDecoration(
+              label: 'Course',
+              icon: Icons.menu_book_outlined,
+            ),
+            hint: const Text('Create a course first'),
+          );
+        }
+
+        return DropdownButtonFormField<String>(
+          value: selectedValue,
+          isExpanded: true,
+          validator: _validateCourse,
+          decoration: _inputDecoration(
+            label: 'Course',
+            icon: Icons.menu_book_outlined,
+          ),
+          hint: const Text('Select course'),
+          items: courses.map((course) {
+            return DropdownMenuItem<String>(
+              value: course.id,
+              child: Text(
+                course.dropdownLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            );
+          }).toList(),
+          onChanged: (courseId) {
+            if (courseId == null) {
+              return;
+            }
+
+            final selectedCourse = courses.firstWhere(
+              (course) => course.id == courseId,
+            );
+
+            setState(() {
+              _selectedCourseId = selectedCourse.id;
+              _selectedCourse = selectedCourse;
+              _gradeController.text = selectedCourse.grade;
+            });
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -732,23 +913,15 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                _buildCourseDropdown(),
+                const SizedBox(height: 12),
                 TextFormField(
                   controller: _gradeController,
-                  textInputAction: TextInputAction.next,
+                  readOnly: true,
                   validator: _validateGrade,
                   decoration: _inputDecoration(
                     label: 'Grade',
                     icon: Icons.school_outlined,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _courseController,
-                  textInputAction: TextInputAction.next,
-                  validator: _validateCourse,
-                  decoration: _inputDecoration(
-                    label: 'Course',
-                    icon: Icons.menu_book_outlined,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -991,6 +1164,76 @@ class _StudentsBottomNavItem extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _TeacherCourse {
+  const _TeacherCourse({
+    required this.id,
+    required this.name,
+    required this.grade,
+    required this.classFee,
+    required this.type,
+    required this.location,
+    required this.status,
+  });
+
+  final String id;
+  final String name;
+  final String grade;
+  final double classFee;
+  final String type;
+  final String location;
+  final String status;
+
+  factory _TeacherCourse.fromSnapshot(
+    QueryDocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    final data = snapshot.data();
+    return _TeacherCourse(
+      id: snapshot.id,
+      name: _readString(data, 'name', 'Unnamed Course'),
+      grade: _readString(data, 'grade', ''),
+      classFee: _readDouble(data, 'classFee'),
+      type: _readString(data, 'type', 'group'),
+      location: _readString(data, 'location', ''),
+      status: _readString(data, 'status', 'active'),
+    );
+  }
+
+  static String _readString(
+    Map<String, dynamic> data,
+    String key,
+    String fallback,
+  ) {
+    final value = data[key]?.toString().trim();
+    return value?.isNotEmpty == true ? value! : fallback;
+  }
+
+  static double _readDouble(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String get typeLabel => type == 'individual' ? 'Individual' : 'Group';
+
+  String get feeLabel {
+    final hasCents = classFee.truncateToDouble() != classFee;
+    return 'Rs ${classFee.toStringAsFixed(hasCents ? 2 : 0)}';
+  }
+
+  String get dropdownLabel {
+    final parts = <String>[
+      name,
+      if (grade.isNotEmpty) grade,
+      typeLabel,
+      feeLabel,
+    ];
+
+    return parts.join(' • ');
   }
 }
 

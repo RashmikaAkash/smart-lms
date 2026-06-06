@@ -1,17 +1,28 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'create_course_sheet.dart';
+import 'courses_page.dart';
 import 'scan_attendance_page.dart';
 import 'students_page.dart';
 
-class TeacherDashboard extends StatelessWidget {
+class TeacherDashboard extends StatefulWidget {
   const TeacherDashboard({super.key, this.userData = const {}});
 
   final Map<String, dynamic> userData;
 
-  String get _name => userData['name']?.toString().trim().isNotEmpty == true
-      ? userData['name'].toString().trim()
-      : 'Teacher';
+  @override
+  State<TeacherDashboard> createState() => _TeacherDashboardState();
+}
+
+class _TeacherDashboardState extends State<TeacherDashboard> {
+  late final PageController _pageController;
+  int _selectedIndex = 0;
+
+  String get _name =>
+      widget.userData['name']?.toString().trim().isNotEmpty == true
+          ? widget.userData['name'].toString().trim()
+          : 'Teacher';
 
   String get _initials {
     final parts = _name.split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
@@ -31,6 +42,39 @@ class TeacherDashboard extends StatelessWidget {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _selectTab(int index) {
+    if (index == 4) {
+      FirebaseAuth.instance.signOut();
+      return;
+    }
+
+    if (_selectedIndex == index) {
+      return;
+    }
+
+    setState(() {
+      _selectedIndex = index;
+    });
+
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF3F6FF),
@@ -38,49 +82,144 @@ class TeacherDashboard extends StatelessWidget {
         child: Column(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _Header(
-                      greeting: _greeting,
-                      name: _name,
-                      initials: _initials,
-                    ),
-                    Transform.translate(
-                      offset: const Offset(0, -18),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const _StatsGrid(),
-                            const SizedBox(height: 18),
-                            const _SectionHeader(
-                              title: 'Quick Actions',
-                              actionLabel: null,
-                              onActionPressed: null,
-                            ),
-                            const SizedBox(height: 10),
-                            const _QuickActionGrid(),
-                            const SizedBox(height: 18),
-                            _SectionHeader(
-                              title: "Today's Classes",
-                              actionLabel: 'See all',
-                              onActionPressed: () {},
-                            ),
-                            const SizedBox(height: 10),
-                            const _ClassList(),
-                            const SizedBox(height: 20),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+              child: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                onPageChanged: (index) {
+                  if (_selectedIndex != index) {
+                    setState(() {
+                      _selectedIndex = index;
+                    });
+                  }
+                },
+                children: [
+                  _DashboardHome(
+                    greeting: _greeting,
+                    name: _name,
+                    initials: _initials,
+                  ),
+                  const StudentsPage(
+                    showBackButton: false,
+                    showBottomNavigation: false,
+                  ),
+                  const CoursesPage(
+                    showBackButton: false,
+                  ),
+                  const _ComingSoonPage(
+                    title: 'Payments',
+                    message: 'Payments section coming soon.',
+                    icon: Icons.credit_card_rounded,
+                  ),
+                ],
               ),
             ),
-            const _BottomNavigation(),
+            _BottomNavigation(
+              selectedIndex: _selectedIndex,
+              onItemSelected: _selectTab,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardHome extends StatelessWidget {
+  const _DashboardHome({
+    required this.greeting,
+    required this.name,
+    required this.initials,
+  });
+
+  final String greeting;
+  final String name;
+  final String initials;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _Header(
+            greeting: greeting,
+            name: name,
+            initials: initials,
+          ),
+          Transform.translate(
+            offset: const Offset(0, -18),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _StatsGrid(),
+                  const SizedBox(height: 18),
+                  const _SectionHeader(
+                    title: 'Quick Actions',
+                    actionLabel: null,
+                    onActionPressed: null,
+                  ),
+                  const SizedBox(height: 10),
+                  const _QuickActionGrid(),
+                  const SizedBox(height: 18),
+                  _SectionHeader(
+                    title: "Today's Classes",
+                    actionLabel: 'See all',
+                    onActionPressed: () {},
+                  ),
+                  const SizedBox(height: 10),
+                  const _ClassList(),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComingSoonPage extends StatelessWidget {
+  const _ComingSoonPage({
+    required this.title,
+    required this.message,
+    required this.icon,
+  });
+
+  final String title;
+  final String message;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: const Color(0xFF8B97AD)),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              style: const TextStyle(
+                color: Color(0xFF071B3C),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF60708F),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ],
         ),
       ),
@@ -432,10 +571,18 @@ class _QuickActionGrid extends StatelessWidget {
             );
           },
         ),
-        const _ActionCard(
+        _ActionCard(
           icon: Icons.add_rounded,
-          iconColor: Color(0xFF7048E8),
+          iconColor: const Color(0xFF7048E8),
           label: 'Create Course',
+          onTap: () {
+            showModalBottomSheet<void>(
+              context: context,
+              isScrollControlled: true,
+              backgroundColor: Colors.transparent,
+              builder: (_) => const CreateCourseSheet(),
+            );
+          },
         ),
         const _ActionCard(
           icon: Icons.upload_rounded,
@@ -640,7 +787,13 @@ class _ClassTile extends StatelessWidget {
 }
 
 class _BottomNavigation extends StatelessWidget {
-  const _BottomNavigation();
+  const _BottomNavigation({
+    required this.selectedIndex,
+    required this.onItemSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onItemSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -654,40 +807,35 @@ class _BottomNavigation extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const _BottomNavItem(
+          _BottomNavItem(
             icon: Icons.dashboard_rounded,
             label: 'Dashboard',
-            isActive: true,
+            isActive: selectedIndex == 0,
+            onTap: () => onItemSelected(0),
           ),
           _BottomNavItem(
             icon: Icons.people_alt_outlined,
             label: 'Students',
-            isActive: false,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const StudentsPage(),
-                ),
-              );
-            },
+            isActive: selectedIndex == 1,
+            onTap: () => onItemSelected(1),
           ),
-          const _BottomNavItem(
+          _BottomNavItem(
             icon: Icons.menu_book_outlined,
             label: 'Courses',
-            isActive: false,
+            isActive: selectedIndex == 2,
+            onTap: () => onItemSelected(2),
           ),
-          const _BottomNavItem(
+          _BottomNavItem(
             icon: Icons.credit_card_rounded,
             label: 'Payments',
-            isActive: false,
+            isActive: selectedIndex == 3,
+            onTap: () => onItemSelected(3),
           ),
           _BottomNavItem(
             icon: Icons.person_outline_rounded,
             label: 'Profile',
             isActive: false,
-            onTap: () async {
-              await FirebaseAuth.instance.signOut();
-            },
+            onTap: () => onItemSelected(4),
           ),
         ],
       ),
@@ -716,12 +864,24 @@ class _BottomNavItem extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
-        child: Padding(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          margin: const EdgeInsets.symmetric(horizontal: 2),
           padding: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            color: isActive ? const Color(0xFFEAF0FF) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20, color: color),
+              AnimatedScale(
+                scale: isActive ? 1.08 : 1,
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                child: Icon(icon, size: 20, color: color),
+              ),
               const SizedBox(height: 3),
               Text(
                 label,

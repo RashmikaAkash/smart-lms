@@ -137,6 +137,10 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
     final grade = payload['grade'] ?? '';
     final studentEmail = payload['email'] ?? '';
     final qrTeacherUid = payload['teacherUid'] ?? '';
+    final courseId = payload['courseId'] ?? '';
+    final classFee = payload['classFee'] ?? '';
+    final classType = payload['classType'] ?? '';
+    final location = payload['location'] ?? '';
     final dateKey = _dateKey(DateTime.now());
     final documentId = '$dateKey-$studentId';
 
@@ -149,7 +153,11 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       'studentName': studentName,
       'studentEmail': studentEmail,
       'grade': grade,
+      'courseId': courseId,
       'course': course,
+      'classFee': classFee,
+      'classType': classType,
+      'location': location,
       'classId': classId,
       'dateKey': dateKey,
       'qrValue': qrValue,

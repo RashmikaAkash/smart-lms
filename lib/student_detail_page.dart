@@ -154,6 +154,9 @@ class _StudentDetailPageState extends State<StudentDetailPage> {
                 _pdfDetailRow('Email', student.email),
                 _pdfDetailRow('Grade', student.grade),
                 _pdfDetailRow('Course', student.course),
+                _pdfDetailRow('Class Type', student.classTypeLabel),
+                _pdfDetailRow('Class Fee', student.feeLabel),
+                _pdfDetailRow('Location', student.location),
                 _pdfDetailRow('Student ID', student.id),
                 pw.Spacer(),
                 pw.Text(
@@ -279,6 +282,10 @@ class _StudentDetailPageState extends State<StudentDetailPage> {
                   teacherUid: student.createdBy.isNotEmpty
                       ? student.createdBy
                       : teacherUid,
+                  courseId: student.courseId,
+                  classFee: student.classFee,
+                  classType: student.classType,
+                  location: student.location,
                 );
 
           return SingleChildScrollView(
@@ -526,6 +533,9 @@ class _DetailsCard extends StatelessWidget {
           _DetailRow(label: 'Email', value: student.email),
           _DetailRow(label: 'Grade', value: student.grade),
           _DetailRow(label: 'Course', value: student.course),
+          _DetailRow(label: 'Class Type', value: student.classTypeLabel),
+          _DetailRow(label: 'Class Fee', value: student.feeLabel),
+          _DetailRow(label: 'Location', value: student.location),
           _DetailRow(label: 'Status', value: student.status),
         ],
       ),
@@ -627,6 +637,10 @@ class _StudentDetailData {
     required this.email,
     required this.grade,
     required this.course,
+    required this.courseId,
+    required this.classFee,
+    required this.classType,
+    required this.location,
     required this.status,
     required this.createdBy,
     required this.qrPayload,
@@ -637,6 +651,10 @@ class _StudentDetailData {
   final String email;
   final String grade;
   final String course;
+  final String courseId;
+  final double classFee;
+  final String classType;
+  final String location;
   final String status;
   final String createdBy;
   final String qrPayload;
@@ -653,6 +671,10 @@ class _StudentDetailData {
       email: _readString(data, 'email', ''),
       grade: _readString(data, 'grade', ''),
       course: _readString(data, 'course', fallbackCourse),
+      courseId: _readString(data, 'courseId', ''),
+      classFee: _readDouble(data, 'classFee'),
+      classType: _readString(data, 'classType', 'group'),
+      location: _readString(data, 'location', ''),
       status: _readString(data, 'status', 'active'),
       createdBy: _readString(data, 'createdBy', ''),
       qrPayload: _readString(data, 'qrPayload', ''),
@@ -668,9 +690,25 @@ class _StudentDetailData {
     return value?.isNotEmpty == true ? value! : fallback;
   }
 
+  static double _readDouble(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
   String get initials {
     final parts = name.split(RegExp(r'\s+')).where((part) => part.isNotEmpty);
     final letters = parts.map((part) => part[0]).take(2).join();
     return letters.isEmpty ? 'ST' : letters.toUpperCase();
+  }
+
+  String get classTypeLabel =>
+      classType == 'individual' ? 'Individual' : 'Group';
+
+  String get feeLabel {
+    final hasCents = classFee.truncateToDouble() != classFee;
+    return 'Rs ${classFee.toStringAsFixed(hasCents ? 2 : 0)}';
   }
 }

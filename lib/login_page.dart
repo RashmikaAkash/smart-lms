@@ -1,8 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-
-import 'student_dashboard.dart';
-import 'teacher_dashboard.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -13,21 +10,31 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _idController = TextEditingController();
+  final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _rememberMe = false;
   bool _isSigningIn = false;
   String _errorMessage = '';
 
-  Future<DocumentSnapshot<Map<String, dynamic>>?> _findUser(String id) async {
-    final users = FirebaseFirestore.instance.collection('users');
-    final userById = await users.doc(id).get();
-
-    return userById.exists ? userById : null;
+  String _authErrorMessage(FirebaseAuthException error) {
+    switch (error.code) {
+      case 'invalid-email':
+        return 'Enter a valid email address.';
+      case 'invalid-credential':
+      case 'user-not-found':
+      case 'wrong-password':
+        return 'Invalid email or password. Please try again.';
+      case 'user-disabled':
+        return 'This account has been disabled.';
+      case 'network-request-failed':
+        return 'Network error. Please check your connection.';
+      default:
+        return 'Auth error: ${error.message ?? error.code}';
+    }
   }
 
   Future<void> _signIn() async {
-    final id = _idController.text.trim();
+    final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     if (!_formKey.currentState!.validate()) {
@@ -39,70 +46,18 @@ class _LoginPageState extends State<LoginPage> {
       _errorMessage = '';
     });
 
-    var didNavigate = false;
-
     try {
-      final userSnapshot = await _findUser(id);
-      final data = userSnapshot?.data();
-
-      if (!mounted) {
-        return;
-      }
-
-      if (userSnapshot == null || data == null) {
-        setState(() {
-          _errorMessage = 'User not found. Please check your ID.';
-        });
-        return;
-      }
-
-      final storedPassword = data['password']?.toString() ?? '';
-      if (storedPassword.isEmpty) {
-        setState(() {
-          _errorMessage = 'Password is not set for this user in Firestore.';
-        });
-        return;
-      }
-
-      if (storedPassword != password) {
-        setState(() {
-          _errorMessage = 'Invalid password. Please try again.';
-        });
-        return;
-      }
-
-      final role = (data['role']?.toString() ?? '').trim().toLowerCase();
-      final userData = <String, dynamic>{
-        ...data,
-        'id': userSnapshot.id,
-      };
-
-      Widget dashboard;
-      if (role == 'student') {
-        dashboard = StudentDashboard(userData: userData);
-      } else if (role == 'teacher') {
-        dashboard = TeacherDashboard(userData: userData);
-      } else {
-        setState(() {
-          _errorMessage = 'Unknown user role. Use student or teacher.';
-        });
-        return;
-      }
-
-      didNavigate = true;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => dashboard),
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
       );
-    } on FirebaseException catch (error) {
+    } on FirebaseAuthException catch (error) {
       if (!mounted) {
         return;
       }
 
       setState(() {
-        _errorMessage = error.code == 'permission-denied'
-            ? 'Firestore permission denied. Please check your rules.'
-            : 'Firebase error: ${error.message ?? error.code}';
+        _errorMessage = _authErrorMessage(error);
       });
     } catch (_) {
       if (!mounted) {
@@ -113,7 +68,7 @@ class _LoginPageState extends State<LoginPage> {
         _errorMessage = 'Unable to sign in. Please try again.';
       });
     } finally {
-      if (mounted && !didNavigate) {
+      if (mounted) {
         setState(() {
           _isSigningIn = false;
         });
@@ -123,7 +78,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
-    _idController.dispose();
+    _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -169,7 +124,7 @@ class _LoginPageState extends State<LoginPage> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             const Text(
-                              'ID',
+                              'Email',
                               style: TextStyle(
                                 fontWeight: FontWeight.w600,
                                 color: Colors.black87,
@@ -177,10 +132,12 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                             const SizedBox(height: 8),
                             TextFormField(
-                              controller: _idController,
+                              controller: _emailController,
                               enabled: !_isSigningIn,
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
                               decoration: InputDecoration(
-                                hintText: 'Student ID or Teacher ID',
+                                hintText: 'Enter your email',
                                 filled: true,
                                 fillColor: const Color(0xFFF6F7FB),
                                 border: OutlineInputBorder(
@@ -189,8 +146,12 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                               ),
                               validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Enter your ID';
+                                final email = value?.trim() ?? '';
+                                if (email.isEmpty) {
+                                  return 'Enter your email';
+                                }
+                                if (!email.contains('@')) {
+                                  return 'Enter a valid email';
                                 }
                                 return null;
                               },
@@ -283,6 +244,7 @@ class _LoginPageState extends State<LoginPage> {
                                       width: 20,
                                       height: 20,
                                       child: CircularProgressIndicator(
+                                        color: Colors.white,
                                         strokeWidth: 2,
                                       ),
                                     )

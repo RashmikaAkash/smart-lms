@@ -133,6 +133,12 @@ class AuthenticatedDashboard extends StatelessWidget {
 
         final userData = snapshot.data ?? _fallbackData;
         final role = (userData['role']?.toString() ?? '').trim().toLowerCase();
+        final status =
+            (userData['status']?.toString() ?? '').trim().toLowerCase();
+
+        if (status == 'archived') {
+          return const RemovedAccountPage();
+        }
 
         if (role == 'teacher') {
           return TeacherDashboard(userData: userData);
@@ -140,6 +146,78 @@ class AuthenticatedDashboard extends StatelessWidget {
 
         return StudentDashboard(userData: userData);
       },
+    );
+  }
+}
+
+class RemovedAccountPage extends StatelessWidget {
+  const RemovedAccountPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D47A1),
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(22),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(
+                    Icons.person_off_outlined,
+                    color: Color(0xFFFF526B),
+                    size: 46,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Account removed',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF071B3C),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'මේ student account එක teacher විසින් remove කරලා තියෙනවා. නැවත access ඕන නම් teacher contact කරන්න.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFF66748F),
+                      fontSize: 13,
+                      height: 1.35,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await FirebaseAuth.instance.signOut();
+                    },
+                    icon: const Icon(Icons.logout_rounded),
+                    label: const Text('Sign Out'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF316DFF),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

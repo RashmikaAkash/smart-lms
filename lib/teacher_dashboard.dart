@@ -1,14 +1,23 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'course_schedule_utils.dart';
+import 'create_assignment_page.dart';
 import 'create_course_sheet.dart';
+import 'create_live_class_page.dart';
+import 'create_quiz_page.dart';
 import 'dashboard_reports_sheet.dart';
 import 'courses_page.dart';
+import 'notifications_page.dart';
+import 'payment_details_page.dart';
 import 'profile_page.dart';
 import 'scan_attendance_page.dart';
 import 'scan_payment_page.dart';
 import 'students_page.dart';
+import 'today_attendance_page.dart';
 import 'upload_material_sheet.dart';
 
 class TeacherDashboard extends StatefulWidget {
@@ -22,6 +31,7 @@ class TeacherDashboard extends StatefulWidget {
 
 class _TeacherDashboardState extends State<TeacherDashboard> {
   late final PageController _pageController;
+  final List<int> _tabHistory = <int>[0];
   int _selectedIndex = 0;
 
   String get _name =>
@@ -58,9 +68,14 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
     super.dispose();
   }
 
-  void _selectTab(int index) {
+  void _selectTab(int index, {bool addToHistory = true}) {
     if (_selectedIndex == index) {
       return;
+    }
+
+    if (addToHistory) {
+      _tabHistory.remove(index);
+      _tabHistory.add(index);
     }
 
     setState(() {
@@ -74,53 +89,93 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
     );
   }
 
+  void _goBackTab() {
+    if (_tabHistory.length > 1) {
+      _tabHistory.removeLast();
+      _selectTab(_tabHistory.last, addToHistory: false);
+      return;
+    }
+
+    if (_selectedIndex != 0) {
+      _selectTab(0, addToHistory: false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF3F6FF),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: PageView(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
-                onPageChanged: (index) {
-                  if (_selectedIndex != index) {
-                    setState(() {
-                      _selectedIndex = index;
-                    });
-                  }
-                },
-                children: [
-                  _DashboardHome(
-                    greeting: _greeting,
-                    name: _name,
-                    initials: _initials,
-                    onProfilePressed: () => _selectTab(4),
-                    onCoursesPressed: () => _selectTab(2),
-                  ),
-                  const StudentsPage(
-                    showBackButton: false,
-                    showBottomNavigation: false,
-                  ),
-                  const CoursesPage(
-                    showBackButton: false,
-                  ),
-                  const _ComingSoonPage(
-                    title: 'Payments',
-                    message: 'Payments section coming soon.',
-                    icon: Icons.credit_card_rounded,
-                  ),
-                  ProfilePage(userData: widget.userData),
-                ],
+    return PopScope(
+      canPop: _selectedIndex == 0,
+      onPopInvoked: (didPop) {
+        if (didPop) {
+          return;
+        }
+
+        _goBackTab();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF3F6FF),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: PageView(
+                  controller: _pageController,
+                  physics: const NeverScrollableScrollPhysics(),
+                  onPageChanged: (index) {
+                    if (_selectedIndex != index) {
+                      setState(() {
+                        _selectedIndex = index;
+                      });
+                    }
+                  },
+                  children: [
+                    _DashboardHome(
+                      greeting: _greeting,
+                      name: _name,
+                      initials: _initials,
+                      onProfilePressed: () => _selectTab(4),
+                      onNotificationsPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const NotificationsPage(),
+                          ),
+                        );
+                      },
+                      onStudentsPressed: () => _selectTab(1),
+                      onCoursesPressed: () => _selectTab(2),
+                      onAttendancePressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const TodayAttendancePage(),
+                          ),
+                        );
+                      },
+                      onPaymentsPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const PaymentDetailsPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    const StudentsPage(
+                      showBackButton: false,
+                      showBottomNavigation: false,
+                    ),
+                    const CoursesPage(
+                      showBackButton: false,
+                    ),
+                    const PaymentDetailsPage(showBackButton: false),
+                    ProfilePage(userData: widget.userData),
+                  ],
+                ),
               ),
-            ),
-            _BottomNavigation(
-              selectedIndex: _selectedIndex,
-              onItemSelected: _selectTab,
-            ),
-          ],
+              _BottomNavigation(
+                selectedIndex: _selectedIndex,
+                onItemSelected: _selectTab,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -133,14 +188,22 @@ class _DashboardHome extends StatelessWidget {
     required this.name,
     required this.initials,
     required this.onProfilePressed,
+    required this.onNotificationsPressed,
+    required this.onStudentsPressed,
     required this.onCoursesPressed,
+    required this.onAttendancePressed,
+    required this.onPaymentsPressed,
   });
 
   final String greeting;
   final String name;
   final String initials;
   final VoidCallback onProfilePressed;
+  final VoidCallback onNotificationsPressed;
+  final VoidCallback onStudentsPressed;
   final VoidCallback onCoursesPressed;
+  final VoidCallback onAttendancePressed;
+  final VoidCallback onPaymentsPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -153,6 +216,7 @@ class _DashboardHome extends StatelessWidget {
             name: name,
             initials: initials,
             onProfilePressed: onProfilePressed,
+            onNotificationsPressed: onNotificationsPressed,
           ),
           Transform.translate(
             offset: const Offset(0, -18),
@@ -163,6 +227,10 @@ class _DashboardHome extends StatelessWidget {
                 children: [
                   _StatsGrid(
                     teacherUid: FirebaseAuth.instance.currentUser?.uid ?? '',
+                    onStudentsPressed: onStudentsPressed,
+                    onAttendancePressed: onAttendancePressed,
+                    onPaymentsPressed: onPaymentsPressed,
+                    onCoursesPressed: onCoursesPressed,
                   ),
                   const SizedBox(height: 18),
                   const _SectionHeader(
@@ -193,64 +261,20 @@ class _DashboardHome extends StatelessWidget {
   }
 }
 
-class _ComingSoonPage extends StatelessWidget {
-  const _ComingSoonPage({
-    required this.title,
-    required this.message,
-    required this.icon,
-  });
-
-  final String title;
-  final String message;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: const Color(0xFF8B97AD)),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              style: const TextStyle(
-                color: Color(0xFF071B3C),
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFF60708F),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _Header extends StatelessWidget {
   const _Header({
     required this.greeting,
     required this.name,
     required this.initials,
     required this.onProfilePressed,
+    required this.onNotificationsPressed,
   });
 
   final String greeting;
   final String name;
   final String initials;
   final VoidCallback onProfilePressed;
+  final VoidCallback onNotificationsPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -300,7 +324,7 @@ class _Header extends StatelessWidget {
               ),
               IconButton(
                 tooltip: 'Notifications',
-                onPressed: () {},
+                onPressed: onNotificationsPressed,
                 icon: const Icon(Icons.notifications_none_rounded),
                 color: Colors.white,
               ),
@@ -350,14 +374,30 @@ class _Header extends StatelessWidget {
 }
 
 class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.teacherUid});
+  const _StatsGrid({
+    required this.teacherUid,
+    required this.onStudentsPressed,
+    required this.onAttendancePressed,
+    required this.onPaymentsPressed,
+    required this.onCoursesPressed,
+  });
 
   final String teacherUid;
+  final VoidCallback onStudentsPressed;
+  final VoidCallback onAttendancePressed;
+  final VoidCallback onPaymentsPressed;
+  final VoidCallback onCoursesPressed;
 
   @override
   Widget build(BuildContext context) {
     if (teacherUid.isEmpty) {
-      return const _StatsCards(stats: _DashboardStats.empty());
+      return _StatsCards(
+        stats: const _DashboardStats.empty(),
+        onStudentsPressed: onStudentsPressed,
+        onAttendancePressed: onAttendancePressed,
+        onPaymentsPressed: onPaymentsPressed,
+        onCoursesPressed: onCoursesPressed,
+      );
     }
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -381,13 +421,30 @@ class _StatsGrid extends StatelessWidget {
                   .where('dateKey', isEqualTo: _dateKey(DateTime.now()))
                   .snapshots(),
               builder: (context, attendanceSnapshot) {
-                final stats = _DashboardStats.fromSnapshots(
-                  studentsSnapshot.data?.docs ?? [],
-                  coursesSnapshot.data?.docs ?? [],
-                  attendanceSnapshot.data?.docs ?? [],
-                );
+                return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: FirebaseFirestore.instance
+                      .collection('teacher_payments')
+                      .doc(teacherUid)
+                      .collection('payments')
+                      .where('monthKey', isEqualTo: _monthKey(DateTime.now()))
+                      .snapshots(),
+                  builder: (context, paymentsSnapshot) {
+                    final stats = _DashboardStats.fromSnapshots(
+                      studentsSnapshot.data?.docs ?? [],
+                      coursesSnapshot.data?.docs ?? [],
+                      attendanceSnapshot.data?.docs ?? [],
+                      paymentsSnapshot.data?.docs ?? [],
+                    );
 
-                return _StatsCards(stats: stats);
+                    return _StatsCards(
+                      stats: stats,
+                      onStudentsPressed: onStudentsPressed,
+                      onAttendancePressed: onAttendancePressed,
+                      onPaymentsPressed: onPaymentsPressed,
+                      onCoursesPressed: onCoursesPressed,
+                    );
+                  },
+                );
               },
             );
           },
@@ -398,9 +455,19 @@ class _StatsGrid extends StatelessWidget {
 }
 
 class _StatsCards extends StatelessWidget {
-  const _StatsCards({required this.stats});
+  const _StatsCards({
+    required this.stats,
+    required this.onStudentsPressed,
+    required this.onAttendancePressed,
+    required this.onPaymentsPressed,
+    required this.onCoursesPressed,
+  });
 
   final _DashboardStats stats;
+  final VoidCallback onStudentsPressed;
+  final VoidCallback onAttendancePressed;
+  final VoidCallback onPaymentsPressed;
+  final VoidCallback onCoursesPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -420,6 +487,7 @@ class _StatsCards extends StatelessWidget {
           label: 'Total Students',
           trend: '${stats.activeStudents} active',
           trendColor: const Color(0xFF00A86B),
+          onTap: onStudentsPressed,
         ),
         _StatCard(
           icon: Icons.insights_rounded,
@@ -427,8 +495,10 @@ class _StatsCards extends StatelessWidget {
           iconBackground: const Color(0xFFE7F9F0),
           value: '${stats.attendancePercent}%',
           label: "Today's Attendance",
-          trend: '${stats.presentToday}/${stats.totalStudents} present',
+          trend:
+              '${stats.presentToday}/${stats.attendanceBaseStudents} present',
           trendColor: const Color(0xFF00A86B),
+          onTap: onAttendancePressed,
         ),
         _StatCard(
           icon: Icons.attach_money_rounded,
@@ -436,8 +506,11 @@ class _StatsCards extends StatelessWidget {
           iconBackground: const Color(0xFFFFF3E0),
           value: stats.revenueLabel,
           label: 'Monthly Revenue',
-          trend: '${stats.pendingStudents} pending',
-          trendColor: const Color(0xFFFF6B00),
+          trend: stats.revenueTrendLabel,
+          trendColor: stats.pendingStudents == 0
+              ? const Color(0xFF00A86B)
+              : const Color(0xFFFF6B00),
+          onTap: onPaymentsPressed,
         ),
         _StatCard(
           icon: Icons.menu_book_rounded,
@@ -447,6 +520,7 @@ class _StatsCards extends StatelessWidget {
           label: 'Active Courses',
           trend: '${stats.scheduledToday} today',
           trendColor: const Color(0xFF00A86B),
+          onTap: onCoursesPressed,
         ),
       ],
     );
@@ -462,6 +536,7 @@ class _StatCard extends StatelessWidget {
     required this.label,
     required this.trend,
     required this.trendColor,
+    this.onTap,
   });
 
   final IconData icon;
@@ -471,70 +546,78 @@ class _StatCard extends StatelessWidget {
   final String label;
   final String trend;
   final Color trendColor;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDDE5F4)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 12,
-            offset: Offset(0, 6),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFDDE5F4)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x14000000),
+                blurRadius: 12,
+                offset: Offset(0, 6),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: iconBackground,
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: iconColor, size: 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: iconBackground,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, color: iconColor, size: 18),
+              ),
+              const Spacer(),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF071B3C),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  height: 1.1,
+                  color: Color(0xFF60708F),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                trend,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: trendColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF071B3C),
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 11,
-              height: 1.1,
-              color: Color(0xFF60708F),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            trend,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: trendColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -635,6 +718,42 @@ class _QuickActionGrid extends StatelessWidget {
               isScrollControlled: true,
               backgroundColor: Colors.transparent,
               builder: (_) => const UploadMaterialSheet(),
+            );
+          },
+        ),
+        _ActionCard(
+          icon: Icons.quiz_rounded,
+          iconColor: const Color(0xFF316DFF),
+          label: 'Create Quiz',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const CreateQuizPage(),
+              ),
+            );
+          },
+        ),
+        _ActionCard(
+          icon: Icons.assignment_rounded,
+          iconColor: const Color(0xFFFF9500),
+          label: 'Create Assignment',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const CreateAssignmentPage(),
+              ),
+            );
+          },
+        ),
+        _ActionCard(
+          icon: Icons.live_tv_rounded,
+          iconColor: const Color(0xFFFF3B6B),
+          label: 'Share Live Class',
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const CreateLiveClassPage(),
+              ),
             );
           },
         ),
@@ -861,14 +980,43 @@ class _ClassTile extends StatelessWidget {
   }
 }
 
-class _NextClassBanner extends StatelessWidget {
+class _NextClassBanner extends StatefulWidget {
   const _NextClassBanner({required this.teacherUid});
 
   final String teacherUid;
 
   @override
+  State<_NextClassBanner> createState() => _NextClassBannerState();
+}
+
+class _NextClassBannerState extends State<_NextClassBanner> {
+  late DateTime _now;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _now = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (teacherUid.isEmpty) {
+    if (widget.teacherUid.isEmpty) {
       return const _NextClassBannerRow(
         label: 'Today',
         value: 'Teacher login needed',
@@ -878,23 +1026,45 @@ class _NextClassBanner extends StatelessWidget {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: FirebaseFirestore.instance
           .collection('teacher_courses')
-          .doc(teacherUid)
+          .doc(widget.teacherUid)
           .collection('courses')
           .snapshots(),
       builder: (context, snapshot) {
-        final todayClasses = (snapshot.data?.docs ?? [])
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            snapshot.data == null) {
+          return _NextClassBannerRow(
+            label: _nextClassDateLabel(_now, _now),
+            value: 'Loading next class...',
+          );
+        }
+
+        final upcomingClasses = (snapshot.data?.docs ?? [])
             .map(_TodayClass.fromSnapshot)
-            .where((course) => course.isActive && course.isToday)
+            .where((course) => course.isActive)
+            .map((course) {
+              final startAt = course.nextStartAfter(_now);
+              return startAt == null
+                  ? null
+                  : _UpcomingClass(course: course, startAt: startAt);
+            })
+            .whereType<_UpcomingClass>()
             .toList()
-          ..sort((first, second) => first.sortTime.compareTo(second.sortTime));
+          ..sort((first, second) => first.startAt.compareTo(second.startAt));
 
-        final nextClass = todayClasses.isEmpty ? null : todayClasses.first;
-        final todayLabel = 'Today - ${_fullDayName(DateTime.now())}';
-        final value = nextClass == null
-            ? 'No classes scheduled today'
-            : 'Next class: ${nextClass.title} - ${nextClass.scheduleTime}';
+        if (upcomingClasses.isEmpty) {
+          return _NextClassBannerRow(
+            label: _nextClassDateLabel(_now, _now),
+            value: 'No upcoming classes scheduled',
+          );
+        }
 
-        return _NextClassBannerRow(label: todayLabel, value: value);
+        final nextClass = upcomingClasses.first;
+
+        return _NextClassBannerRow(
+          label: _nextClassDateLabel(nextClass.startAt, _now),
+          value:
+              'Next class: ${nextClass.course.title} - ${nextClass.course.timeLabelForDate(nextClass.startAt)}',
+        );
       },
     );
   }
@@ -983,9 +1153,11 @@ class _DashboardStats {
     required this.activeStudents,
     required this.pendingStudents,
     required this.presentToday,
+    required this.attendanceBaseStudents,
     required this.activeCourses,
     required this.scheduledToday,
     required this.monthlyRevenue,
+    required this.paidPayments,
   });
 
   const _DashboardStats.empty()
@@ -993,50 +1165,103 @@ class _DashboardStats {
         activeStudents = 0,
         pendingStudents = 0,
         presentToday = 0,
+        attendanceBaseStudents = 0,
         activeCourses = 0,
         scheduledToday = 0,
-        monthlyRevenue = 0;
+        monthlyRevenue = 0,
+        paidPayments = 0;
 
   final int totalStudents;
   final int activeStudents;
   final int pendingStudents;
   final int presentToday;
+  final int attendanceBaseStudents;
   final int activeCourses;
   final int scheduledToday;
   final double monthlyRevenue;
+  final int paidPayments;
 
   factory _DashboardStats.fromSnapshots(
     List<QueryDocumentSnapshot<Map<String, dynamic>>> studentDocs,
     List<QueryDocumentSnapshot<Map<String, dynamic>>> courseDocs,
     List<QueryDocumentSnapshot<Map<String, dynamic>>> attendanceDocs,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> paymentDocs,
   ) {
     final students = studentDocs
         .where((doc) => doc.data()['role']?.toString() == 'student')
+        .where(
+          (doc) => doc.data()['status']?.toString().toLowerCase() != 'archived',
+        )
         .toList();
-    final pendingStatuses = {'due', 'overdue', 'pending'};
-    final activeStudents = students
-        .where((doc) => doc.data()['status']?.toString() != 'archived')
-        .length;
-    final pendingStudents = students.where((doc) {
-      return pendingStatuses.contains(
-        (doc.data()['paymentStatus'] ?? doc.data()['status'] ?? '')
-            .toString()
-            .toLowerCase(),
-      );
+    final activeStudentIds = students.map((doc) => doc.id).toSet();
+    final activeStudents = students.length;
+    final activePaymentDocs = paymentDocs
+        .where((doc) => _isPaidDashboardPayment(doc.data()))
+        .toList();
+    final paidCourseKeys = activePaymentDocs
+        .expand((doc) => _paymentMatchKeys(doc.data()))
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    final studentCourseFees = students
+        .expand((doc) => _studentCourseFees(doc.id, doc.data()))
+        .where((course) => course.amount > 0)
+        .toList();
+    final matchedPaidPaymentCount = studentCourseFees.where((course) {
+      return course.matchKeys.any(paidCourseKeys.contains);
     }).length;
-    final revenue = students.fold<double>(0, (total, doc) {
-      return total + _readDouble(doc.data(), 'classFee');
-    });
-    final activeCourses = courseDocs
-        .where((doc) => doc.data()['status']?.toString() != 'archived')
+    final activeStudentPaymentCount = activePaymentDocs
+        .where(
+          (doc) => activeStudentIds.contains(
+            _readString(doc.data(), 'studentId', ''),
+          ),
+        )
+        .map(_paymentSlotKey)
+        .where((key) => key.isNotEmpty)
+        .toSet()
         .length;
-    final scheduledToday = courseDocs
+    final strongestPaidCount = activeStudentPaymentCount > matchedPaidPaymentCount
+        ? activeStudentPaymentCount
+        : matchedPaidPaymentCount;
+    final paidPaymentCount = strongestPaidCount > studentCourseFees.length
+        ? studentCourseFees.length
+        : strongestPaidCount;
+    final pendingStudents = studentCourseFees.length - paidPaymentCount;
+    final revenue = activePaymentDocs.fold<double>(0, (total, doc) {
+      return total + _readDouble(doc.data(), 'amount');
+    });
+    final activeCourseDocs = courseDocs
+        .where((doc) => doc.data()['status']?.toString() != 'archived')
+        .toList();
+    final activeCourses = activeCourseDocs.length;
+    final todayCourses = activeCourseDocs
         .map(_TodayClass.fromSnapshot)
         .where((course) => course.isActive && course.isToday)
-        .length;
+        .toList();
+    final scheduledToday = todayCourses.length;
+    final scheduledStudentIds = students
+        .where((studentDoc) => _studentHasAnyCourseToday(
+              studentId: studentDoc.id,
+              studentData: studentDoc.data(),
+              todayCourses: todayCourses,
+            ))
+        .map((studentDoc) => studentDoc.id)
+        .toSet();
     final presentStudentIds = attendanceDocs
+        .where(
+          (doc) => doc.data()['status']?.toString().toLowerCase() == 'present',
+        )
+        .where(
+          (doc) => _attendanceMatchesAnyCourseToday(
+            doc.data(),
+            todayCourses,
+          ),
+        )
         .map((doc) => doc.data()['studentId']?.toString() ?? '')
-        .where((studentId) => studentId.isNotEmpty)
+        .where(
+          (studentId) =>
+              activeStudentIds.contains(studentId) &&
+              scheduledStudentIds.contains(studentId),
+        )
         .toSet();
 
     return _DashboardStats(
@@ -1044,29 +1269,288 @@ class _DashboardStats {
       activeStudents: activeStudents,
       pendingStudents: pendingStudents,
       presentToday: presentStudentIds.length,
+      attendanceBaseStudents: scheduledStudentIds.length,
       activeCourses: activeCourses,
       scheduledToday: scheduledToday,
       monthlyRevenue: revenue,
+      paidPayments: paidPaymentCount,
     );
   }
 
   int get attendancePercent {
-    if (totalStudents == 0) {
+    if (attendanceBaseStudents == 0) {
       return 0;
     }
-    return ((presentToday / totalStudents) * 100).clamp(0, 100).round();
+    return ((presentToday / attendanceBaseStudents) * 100)
+        .clamp(0, 100)
+        .round();
   }
 
   String get revenueLabel {
-    if (monthlyRevenue >= 1000) {
-      final value = monthlyRevenue / 1000;
-      final text = value == value.truncateToDouble()
-          ? value.toStringAsFixed(0)
-          : value.toStringAsFixed(1);
-      return 'Rs ${text}k';
-    }
     return 'Rs ${monthlyRevenue.toStringAsFixed(0)}';
   }
+
+  String get revenueTrendLabel {
+    final totalPayments = paidPayments + pendingStudents;
+    if (totalPayments == 0) {
+      return 'No fees this month';
+    }
+
+    return '$paidPayments/$totalPayments paid';
+  }
+}
+
+class _StudentCourseFee {
+  const _StudentCourseFee({
+    required this.studentId,
+    required this.courseId,
+    required this.courseName,
+    required this.amount,
+  });
+
+  final String studentId;
+  final String courseId;
+  final String courseName;
+  final double amount;
+
+  Set<String> get matchKeys => _courseFeeMatchKeys(
+        studentId: studentId,
+        courseId: courseId,
+        courseName: courseName,
+      );
+
+  Set<String> get courseMatchKeys => _courseOnlyMatchKeys(
+        courseId: courseId,
+        courseName: courseName,
+      );
+}
+
+List<_StudentCourseFee> _studentCourseFees(
+  String studentId,
+  Map<String, dynamic> data,
+) {
+  final fees = <_StudentCourseFee>[];
+
+  void addFee(_StudentCourseFee fee) {
+    final keys = fee.matchKeys;
+    final exists = fees.any(
+      (existing) => existing.matchKeys.any(keys.contains),
+    );
+
+    if (!exists) {
+      fees.add(fee);
+    }
+  }
+
+  void addFromCourseMap(Map<dynamic, dynamic> rawData) {
+    final courseData = <String, dynamic>{};
+    rawData.forEach((key, value) {
+      courseData[key.toString()] = value;
+    });
+
+    addFee(
+      _StudentCourseFee(
+        studentId: studentId,
+        courseId: _readString(
+          courseData,
+          'courseId',
+          _readString(courseData, 'id', ''),
+        ),
+        courseName: _readString(
+          courseData,
+          'course',
+          _readString(courseData, 'name', ''),
+        ),
+        amount: _readFeeAmount(courseData),
+      ),
+    );
+  }
+
+  void addFromField(String field) {
+    final value = data[field];
+    if (value is! Iterable) {
+      return;
+    }
+
+    for (final item in value) {
+      if (item is Map) {
+        addFromCourseMap(item);
+      }
+    }
+  }
+
+  addFromField('courses');
+  addFromField('enrolledCourses');
+  addFromField('studentCourses');
+  if (fees.isEmpty) {
+    addFee(
+      _StudentCourseFee(
+        studentId: studentId,
+        courseId: _readString(data, 'courseId', ''),
+        courseName: _readString(
+          data,
+          'course',
+          _readString(data, 'subject', ''),
+        ),
+        amount: _readFeeAmount(data),
+      ),
+    );
+  }
+
+  return fees;
+}
+
+bool _studentHasAnyCourseToday({
+  required String studentId,
+  required Map<String, dynamic> studentData,
+  required List<_TodayClass> todayCourses,
+}) {
+  if (todayCourses.isEmpty) {
+    return false;
+  }
+
+  final studentCourses = _studentCourseFees(studentId, studentData);
+  if (studentCourses.isEmpty) {
+    return false;
+  }
+
+  return studentCourses.any((studentCourse) {
+    return todayCourses.any((todayCourse) {
+      return studentCourse.courseMatchKeys.any(todayCourse.matchKeys.contains);
+    });
+  });
+}
+
+bool _attendanceMatchesAnyCourseToday(
+  Map<String, dynamic> attendanceData,
+  List<_TodayClass> todayCourses,
+) {
+  if (todayCourses.isEmpty) {
+    return false;
+  }
+
+  final attendanceCourseKeys = _courseOnlyMatchKeys(
+    courseId: _readString(attendanceData, 'courseId', ''),
+    courseName: _readString(
+      attendanceData,
+      'courseName',
+      _readString(attendanceData, 'course', ''),
+    ),
+  );
+
+  if (attendanceCourseKeys.isEmpty) {
+    return false;
+  }
+
+  return todayCourses.any((course) {
+    return attendanceCourseKeys.any(course.matchKeys.contains);
+  });
+}
+
+Iterable<String> _paymentMatchKeys(Map<String, dynamic> data) {
+  return _courseFeeMatchKeys(
+    studentId: _readString(data, 'studentId', ''),
+    courseId: _readString(data, 'courseId', ''),
+    courseName: _readString(
+      data,
+      'courseName',
+      _readString(data, 'course', ''),
+    ),
+  );
+}
+
+bool _isPaidDashboardPayment(Map<String, dynamic> data) {
+  final status = _readString(data, 'status', 'paid').toLowerCase();
+  return status != 'archived' &&
+      status != 'deleted' &&
+      status != 'cancelled' &&
+      status != 'pending';
+}
+
+String _paymentSlotKey(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
+  final data = doc.data();
+  final studentId = _readString(data, 'studentId', '').trim().toLowerCase();
+  if (studentId.isEmpty) {
+    return '';
+  }
+
+  final courseId = _readString(data, 'courseId', '').trim().toLowerCase();
+  if (courseId.isNotEmpty) {
+    return '$studentId|id:$courseId';
+  }
+
+  final courseName = _readString(
+    data,
+    'courseName',
+    _readString(data, 'course', ''),
+  ).trim().toLowerCase();
+  if (courseName.isNotEmpty) {
+    return '$studentId|name:$courseName';
+  }
+
+  return '$studentId|doc:${doc.id.toLowerCase()}';
+}
+
+Set<String> _courseFeeMatchKeys({
+  required String studentId,
+  required String courseId,
+  required String courseName,
+}) {
+  final studentKey = studentId.trim().toLowerCase();
+  final courseIdKey = courseId.trim().toLowerCase();
+  final courseNameKey = courseName.trim().toLowerCase();
+  final keys = <String>{};
+
+  if (studentKey.isEmpty) {
+    return keys;
+  }
+
+  if (courseIdKey.isNotEmpty) {
+    keys.add('$studentKey|id:$courseIdKey');
+  }
+
+  if (courseNameKey.isNotEmpty) {
+    keys.add('$studentKey|name:$courseNameKey');
+  }
+
+  if (keys.isEmpty) {
+    keys.add('$studentKey|any');
+  }
+
+  return keys;
+}
+
+Set<String> _courseOnlyMatchKeys({
+  required String courseId,
+  required String courseName,
+}) {
+  final courseIdKey = courseId.trim().toLowerCase();
+  final courseNameKey = courseName.trim().toLowerCase();
+  final keys = <String>{};
+
+  if (courseIdKey.isNotEmpty) {
+    keys.add('id:$courseIdKey');
+  }
+
+  if (courseNameKey.isNotEmpty) {
+    keys.add('name:$courseNameKey');
+  }
+
+  return keys;
+}
+
+double _readFeeAmount(Map<String, dynamic> data) {
+  final classFee = _readDouble(data, 'classFee');
+  if (classFee > 0) {
+    return classFee;
+  }
+
+  final amount = _readDouble(data, 'amount');
+  if (amount > 0) {
+    return amount;
+  }
+
+  return _readDouble(data, 'fee');
 }
 
 class _TodayClass {
@@ -1077,6 +1561,7 @@ class _TodayClass {
     required this.location,
     required this.scheduleDays,
     required this.scheduleTime,
+    required this.scheduleSlots,
     required this.statusValue,
   });
 
@@ -1086,52 +1571,106 @@ class _TodayClass {
   final String location;
   final List<String> scheduleDays;
   final String scheduleTime;
+  final List<CourseScheduleSlot> scheduleSlots;
   final String statusValue;
 
   factory _TodayClass.fromSnapshot(
     QueryDocumentSnapshot<Map<String, dynamic>> snapshot,
   ) {
     final data = snapshot.data();
+    final slots = courseScheduleSlotsFromData(data);
+    final scheduleDays = _readStringList(data, 'scheduleDays');
     return _TodayClass(
       id: snapshot.id,
       name: _readString(data, 'name', 'Unnamed Course'),
       grade: _readString(data, 'grade', ''),
       location: _readString(data, 'location', ''),
-      scheduleDays: _readStringList(data, 'scheduleDays'),
+      scheduleDays: scheduleDays.isNotEmpty
+          ? scheduleDays
+          : courseScheduleDaysFromSlots(slots),
       scheduleTime: _readString(data, 'scheduleTime', ''),
+      scheduleSlots: slots,
       statusValue: _readString(data, 'status', 'active'),
     );
   }
 
   bool get isActive => statusValue != 'archived';
 
-  bool get isToday => scheduleDays.contains(_shortDayName(DateTime.now()));
+  bool get isToday => _slotForDate(DateTime.now()) != null;
 
-  int get sortTime => _minutesFromTime(scheduleTime) ?? 9999;
+  int get sortTime => _slotForDate(DateTime.now())?.range.startMinutes ?? 9999;
+
+  DateTime? nextStartAfter(DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    for (var dayOffset = 0; dayOffset < 8; dayOffset++) {
+      final date = today.add(Duration(days: dayOffset));
+      final slot = _slotForDate(date);
+      if (slot == null) {
+        continue;
+      }
+
+      final startAt = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        slot.range.startMinutes ~/ 60,
+        slot.range.startMinutes % 60,
+      );
+
+      if (startAt.isAfter(now)) {
+        return startAt;
+      }
+    }
+
+    return null;
+  }
+
+  CourseScheduleSlot? _slotForDate(DateTime date) {
+    return courseScheduleSlotForDate(
+      scheduleSlots: scheduleSlots,
+      scheduleDays: scheduleDays,
+      scheduleTime: scheduleTime,
+      date: date,
+    );
+  }
+
+  String timeLabelForDate(DateTime date) {
+    return _slotForDate(date)?.range.label ??
+        (scheduleTime.isNotEmpty ? scheduleTime : 'Schedule time not set');
+  }
 
   String get title => grade.isEmpty ? name : '$name $grade';
 
+  Set<String> get matchKeys {
+    return _courseOnlyMatchKeys(courseId: id, courseName: name);
+  }
+
   String get timeAndLocation {
+    final todaySlot = _slotForDate(DateTime.now());
     final parts = <String>[
-      if (scheduleTime.isNotEmpty) scheduleTime,
+      if (todaySlot != null)
+        todaySlot.range.label
+      else if (scheduleTime.isNotEmpty)
+        scheduleTime,
       if (location.isNotEmpty) location,
     ];
     return parts.isEmpty ? 'Schedule time not set' : parts.join(' • ');
   }
 
   String get status {
-    final minutes = _minutesFromTime(scheduleTime);
-    if (minutes == null) {
+    final todaySlot = _slotForDate(DateTime.now());
+    if (todaySlot == null) {
       return 'Later';
     }
 
     final now = DateTime.now();
     final currentMinutes = (now.hour * 60) + now.minute;
 
-    if (currentMinutes >= minutes && currentMinutes <= minutes + 90) {
+    if (currentMinutes >= todaySlot.range.startMinutes &&
+        currentMinutes <= todaySlot.range.endMinutes) {
       return 'Live';
     }
-    if (currentMinutes < minutes) {
+    if (currentMinutes < todaySlot.range.startMinutes) {
       return 'Soon';
     }
     return 'Done';
@@ -1161,6 +1700,16 @@ class _TodayClass {
         return (const Color(0xFF316DFF), const Color(0xFFEAF0FF));
     }
   }
+}
+
+class _UpcomingClass {
+  const _UpcomingClass({
+    required this.course,
+    required this.startAt,
+  });
+
+  final _TodayClass course;
+  final DateTime startAt;
 }
 
 class _BottomNavigation extends StatelessWidget {
@@ -1284,9 +1833,9 @@ String _dateKey(DateTime date) {
   return '${date.year}-$month-$day';
 }
 
-String _shortDayName(DateTime date) {
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  return days[date.weekday - 1];
+String _monthKey(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  return '${date.year}-$month';
 }
 
 String _fullDayName(DateTime date) {
@@ -1300,6 +1849,19 @@ String _fullDayName(DateTime date) {
     'Sunday',
   ];
   return days[date.weekday - 1];
+}
+
+String _nextClassDateLabel(DateTime date, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final target = DateTime(date.year, date.month, date.day);
+  final dayDifference = target.difference(today).inDays;
+  final prefix = switch (dayDifference) {
+    0 => 'Today',
+    1 => 'Tomorrow',
+    _ => _dateKey(date),
+  };
+
+  return '$prefix - ${_fullDayName(date)}';
 }
 
 String _readString(
@@ -1328,41 +1890,4 @@ List<String> _readStringList(Map<String, dynamic> data, String key) {
         .toList();
   }
   return const [];
-}
-
-int? _minutesFromTime(String value) {
-  final trimmed = value.trim();
-  if (trimmed.isEmpty) {
-    return null;
-  }
-
-  final match = RegExp(
-    r'^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$',
-    caseSensitive: false,
-  ).firstMatch(trimmed);
-
-  if (match == null) {
-    return null;
-  }
-
-  var hour = int.tryParse(match.group(1) ?? '');
-  final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
-  final period = match.group(3)?.toUpperCase();
-
-  if (hour == null || minute < 0 || minute > 59) {
-    return null;
-  }
-
-  if (period == 'PM' && hour < 12) {
-    hour += 12;
-  }
-  if (period == 'AM' && hour == 12) {
-    hour = 0;
-  }
-
-  if (hour < 0 || hour > 23) {
-    return null;
-  }
-
-  return (hour * 60) + minute;
 }

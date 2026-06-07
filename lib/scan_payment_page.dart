@@ -24,7 +24,6 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
   late final AnimationController _successController;
 
   bool _isSaving = false;
-  String? _lastScannedValue;
   String? _statusMessage;
   Color _statusColor = const Color(0xFF20D6A1);
 
@@ -67,13 +66,12 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
     }
 
     final rawValue = capture.barcodes.first.rawValue?.trim();
-    if (rawValue == null || rawValue.isEmpty || rawValue == _lastScannedValue) {
+    if (rawValue == null || rawValue.isEmpty) {
       return;
     }
 
     setState(() {
       _isSaving = true;
-      _lastScannedValue = rawValue;
       _statusMessage = 'Checking student payment...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -172,9 +170,26 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
       throw StateError('No course found for this student.');
     }
 
-    final selectedCourse = courses.length == 1
-        ? courses.first
-        : await _chooseCourse(student, courses);
+    final paymentMonthKey = _monthKey(DateTime.now());
+    final paymentMonthLabel = _monthLabel(DateTime.now());
+    final unpaidCourses = await _unpaidCoursesForMonth(
+      payments: payments,
+      student: student,
+      courses: courses,
+      monthKey: paymentMonthKey,
+    );
+
+    if (unpaidCourses.isEmpty) {
+      throw StateError(
+        courses.length == 1
+            ? _alreadyPaidMessage(student, courses.first, paymentMonthLabel)
+            : _allCoursesPaidMessage(student, paymentMonthLabel),
+      );
+    }
+
+    final selectedCourse = unpaidCourses.length == 1
+        ? unpaidCourses.first
+        : await _chooseCourse(student, unpaidCourses);
 
     if (selectedCourse == null) {
       throw StateError('Payment cancelled.');
@@ -347,10 +362,21 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
   }) async {
     final now = DateTime.now();
     final monthKey = _monthKey(now);
+    final monthLabel = _monthLabel(now);
     final courseKey = _safeKey(course.id.isNotEmpty ? course.id : course.name);
     final documentId = '$monthKey-${student.id}-$courseKey';
+    final paymentReference = payments.doc(documentId);
     final studentReference =
         FirebaseFirestore.instance.collection('users').doc(student.id);
+
+    await _ensureCoursePaymentIsNew(
+      payments: payments,
+      student: student,
+      course: course,
+      monthKey: monthKey,
+      monthLabel: monthLabel,
+    );
+
     final paymentData = {
       'id': documentId,
       'studentId': student.id,
@@ -364,7 +390,7 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
       'location': course.location,
       'amount': course.amount,
       'monthKey': monthKey,
-      'monthLabel': _monthLabel(now),
+      'monthLabel': monthLabel,
       'status': 'paid',
       'source': 'qr_scan',
       'qrValue': qrValue,
@@ -375,8 +401,15 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
     };
 
     await FirebaseFirestore.instance.runTransaction((transaction) async {
-      transaction.set(
-          payments.doc(documentId), paymentData, SetOptions(merge: true));
+      final existingPayment = await transaction.get(paymentReference);
+      final existingPaymentData = existingPayment.data();
+      if (existingPayment.exists &&
+          existingPaymentData != null &&
+          _isPaidPaymentData(existingPaymentData)) {
+        throw StateError(_alreadyPaidMessage(student, course, monthLabel));
+      }
+
+      transaction.set(paymentReference, paymentData, SetOptions(merge: true));
       transaction.set(
           studentReference,
           {
@@ -406,6 +439,90 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
       courseName: course.name,
       amount: course.amount,
     );
+  }
+
+  Future<void> _ensureCoursePaymentIsNew({
+    required CollectionReference<Map<String, dynamic>> payments,
+    required _PaymentStudent student,
+    required _PaymentCourse course,
+    required String monthKey,
+    required String monthLabel,
+  }) async {
+    final snapshot =
+        await payments.where('monthKey', isEqualTo: monthKey).get();
+    final alreadyPaid = snapshot.docs.any((doc) {
+      final data = doc.data();
+      return _readString(data, 'studentId') == student.id &&
+          _isPaidPaymentData(data) &&
+          _paymentMatchesCourse(data, course);
+    });
+
+    if (alreadyPaid) {
+      throw StateError(_alreadyPaidMessage(student, course, monthLabel));
+    }
+  }
+
+  Future<List<_PaymentCourse>> _unpaidCoursesForMonth({
+    required CollectionReference<Map<String, dynamic>> payments,
+    required _PaymentStudent student,
+    required List<_PaymentCourse> courses,
+    required String monthKey,
+  }) async {
+    final snapshot =
+        await payments.where('monthKey', isEqualTo: monthKey).get();
+    final studentPaidPayments = snapshot.docs
+        .map((doc) => doc.data())
+        .where((data) {
+          return _readString(data, 'studentId') == student.id &&
+              _isPaidPaymentData(data);
+        })
+        .toList();
+
+    return courses.where((course) {
+      final alreadyPaid = studentPaidPayments.any(
+        (paymentData) => _paymentMatchesCourse(paymentData, course),
+      );
+      return !alreadyPaid;
+    }).toList();
+  }
+
+  bool _paymentMatchesCourse(
+    Map<String, dynamic> paymentData,
+    _PaymentCourse course,
+  ) {
+    final paidCourseId = _readString(paymentData, 'courseId').toLowerCase();
+    final paidCourseName = _readString(
+      paymentData,
+      'courseName',
+      _readString(paymentData, 'course'),
+    ).toLowerCase();
+    final courseId = course.id.trim().toLowerCase();
+    final courseName = course.name.trim().toLowerCase();
+
+    if (paidCourseId.isNotEmpty &&
+        courseId.isNotEmpty &&
+        paidCourseId == courseId) {
+      return true;
+    }
+
+    return paidCourseName.isNotEmpty &&
+        courseName.isNotEmpty &&
+        paidCourseName == courseName;
+  }
+
+  String _alreadyPaidMessage(
+    _PaymentStudent student,
+    _PaymentCourse course,
+    String monthLabel,
+  ) {
+    return '${student.name} මේ $monthLabel මාසයට ${course.name} fee එක already paid.';
+  }
+
+  String _allCoursesPaidMessage(
+    _PaymentStudent student,
+    String monthLabel,
+  ) {
+    return '${student.name} මේ $monthLabel මාසයට course ඔක්කොටම pay කරලා තියෙන්නේ.';
   }
 
   Map<String, String> _parseQrPayload(String rawValue) {
@@ -510,7 +627,6 @@ class _ScanPaymentPageState extends State<ScanPaymentPage>
   Future<void> _handleManualEntry(String studentId) async {
     setState(() {
       _isSaving = true;
-      _lastScannedValue = null;
       _statusMessage = 'Saving manual payment...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -1015,7 +1131,9 @@ class _RecentPaymentsPanel extends StatelessWidget {
           );
         }
 
-        final docs = (snapshot.data?.docs ?? []).toList()
+        final docs = (snapshot.data?.docs ?? [])
+            .where((doc) => _isActivePaymentData(doc.data()))
+            .toList()
           ..sort((first, second) {
             final firstPaidAt = first.data()['paidAt'];
             final secondPaidAt = second.data()['paidAt'];
@@ -1324,10 +1442,21 @@ String _amountLabel(double amount) {
   return 'Rs ${amount.toStringAsFixed(hasCents ? 2 : 0)}';
 }
 
+bool _isActivePaymentData(Map<String, dynamic> data) {
+  final status = data['status']?.toString().toLowerCase() ?? '';
+  return status != 'archived' && status != 'deleted' && status != 'cancelled';
+}
+
+bool _isPaidPaymentData(Map<String, dynamic> data) {
+  final status = data['status']?.toString().toLowerCase() ?? '';
+  return _isActivePaymentData(data) && (status.isEmpty || status == 'paid');
+}
+
 String _readString(
   Map<String, dynamic> data,
-  String key,
-  String fallback,
+  String key, [
+  String fallback = '',
+  ]
 ) {
   final value = data[key]?.toString().trim();
   return value?.isNotEmpty == true ? value! : fallback;

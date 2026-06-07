@@ -630,6 +630,9 @@ class _ProfilePageState extends State<ProfilePage> {
   int _countStudents(List<QueryDocumentSnapshot<Map<String, dynamic>>>? docs) {
     return (docs ?? [])
         .where((doc) => doc.data()['role']?.toString() == 'student')
+        .where(
+          (doc) => doc.data()['status']?.toString().toLowerCase() != 'archived',
+        )
         .length;
   }
 

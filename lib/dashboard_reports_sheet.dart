@@ -431,11 +431,12 @@ class _DashboardReport {
   ) {
     final students = studentDocs
         .where((doc) => doc.data()['role']?.toString() == 'student')
+        .where(
+          (doc) => doc.data()['status']?.toString().toLowerCase() != 'archived',
+        )
         .toList();
     final pendingStatuses = {'due', 'overdue', 'pending'};
-    final activeStudents = students
-        .where((doc) => doc.data()['status']?.toString() != 'archived')
-        .length;
+    final activeStudents = students.length;
     final pendingStudents = students.where((doc) {
       return pendingStatuses.contains(
         (doc.data()['paymentStatus'] ?? doc.data()['status'] ?? '')

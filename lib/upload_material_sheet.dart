@@ -8,12 +8,22 @@ class UploadMaterialSheet extends StatefulWidget {
     this.initialCourseId,
     this.initialCourseName,
     this.initialCourseGrade,
+    this.materialId,
+    this.initialTitle,
+    this.initialDescription,
+    this.initialLink,
+    this.initialType,
     this.lockCourse = false,
   });
 
   final String? initialCourseId;
   final String? initialCourseName;
   final String? initialCourseGrade;
+  final String? materialId;
+  final String? initialTitle;
+  final String? initialDescription;
+  final String? initialLink;
+  final String? initialType;
   final bool lockCourse;
 
   @override
@@ -49,6 +59,10 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
   void initState() {
     super.initState();
     _selectedCourseId = widget.initialCourseId;
+    _titleController.text = widget.initialTitle ?? '';
+    _descriptionController.text = widget.initialDescription ?? '';
+    _linkController.text = widget.initialLink ?? '';
+    _materialType = widget.initialType ?? 'note';
     if (widget.initialCourseId != null && widget.initialCourseName != null) {
       _selectedCourse = _MaterialCourse(
         id: widget.initialCourseId!,
@@ -94,11 +108,14 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
       }
 
       final link = _linkController.text.trim();
-      final materialReference = FirebaseFirestore.instance
+      final materialsCollection = FirebaseFirestore.instance
           .collection('teacher_materials')
           .doc(teacher.uid)
-          .collection('materials')
-          .doc();
+          .collection('materials');
+      final materialReference = widget.materialId?.isNotEmpty == true
+          ? materialsCollection.doc(widget.materialId)
+          : materialsCollection.doc();
+      final isEdit = widget.materialId?.isNotEmpty == true;
 
       await materialReference.set({
         'id': materialReference.id,
@@ -121,9 +138,9 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
         'sourceStatus': 'ready',
         'teacherUid': teacher.uid,
         'teacherEmail': teacher.email,
-        'createdAt': FieldValue.serverTimestamp(),
+        if (!isEdit) 'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
 
       if (!mounted) {
         return;
@@ -131,7 +148,13 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
 
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${_titleController.text.trim()} saved.')),
+        SnackBar(
+          content: Text(
+            isEdit
+                ? '${_titleController.text.trim()} updated.'
+                : '${_titleController.text.trim()} saved.',
+          ),
+        ),
       );
     } on FirebaseException catch (error) {
       if (!mounted) {
@@ -214,7 +237,10 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _UploadHeader(type: _materialType),
+                _UploadHeader(
+                  type: _materialType,
+                  isEdit: widget.materialId?.isNotEmpty == true,
+                ),
                 const SizedBox(height: 16),
                 _buildCoursePicker(),
                 const SizedBox(height: 14),
@@ -285,7 +311,13 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
                           ),
                         )
                       : const Icon(Icons.save_rounded),
-                  label: Text(_isSaving ? 'Saving...' : 'Save Material Link'),
+                  label: Text(
+                    _isSaving
+                        ? 'Saving...'
+                        : widget.materialId?.isNotEmpty == true
+                            ? 'Update Material'
+                            : 'Save Material Link',
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: const Color(0xFF316DFF),
                     disabledBackgroundColor: const Color(0xFF9BB6FF),
@@ -429,9 +461,10 @@ class _UploadMaterialSheetState extends State<UploadMaterialSheet> {
 }
 
 class _UploadHeader extends StatelessWidget {
-  const _UploadHeader({required this.type});
+  const _UploadHeader({required this.type, required this.isEdit});
 
   final String type;
+  final bool isEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -463,20 +496,20 @@ class _UploadHeader extends StatelessWidget {
             child: Icon(config.icon, color: Colors.white, size: 28),
           ),
           const SizedBox(width: 14),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Save Course Material',
-                  style: TextStyle(
+                  isEdit ? 'Update Course Material' : 'Save Course Material',
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 19,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                SizedBox(height: 5),
-                Text(
+                const SizedBox(height: 5),
+                const Text(
                   'Google Drive / YouTube / website links course එකට attach කරන්න.',
                   style: TextStyle(
                     color: Colors.white70,

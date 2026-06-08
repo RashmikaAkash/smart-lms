@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -9,12 +10,49 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  static const _rememberMeKey = 'login_remember_me';
+  static const _rememberedEmailKey = 'login_remembered_email';
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _rememberMe = false;
   bool _isSigningIn = false;
   String _errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRememberedLogin();
+  }
+
+  Future<void> _loadRememberedLogin() async {
+    final preferences = await SharedPreferences.getInstance();
+    final shouldRemember = preferences.getBool(_rememberMeKey) ?? false;
+    final rememberedEmail = preferences.getString(_rememberedEmailKey) ?? '';
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _rememberMe = shouldRemember;
+      if (shouldRemember && rememberedEmail.isNotEmpty) {
+        _emailController.text = rememberedEmail;
+      }
+    });
+  }
+
+  Future<void> _saveRememberedLogin(String email) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_rememberMeKey, _rememberMe);
+
+    if (_rememberMe) {
+      await preferences.setString(_rememberedEmailKey, email);
+    } else {
+      await preferences.remove(_rememberedEmailKey);
+    }
+  }
 
   String _authErrorMessage(FirebaseAuthException error) {
     switch (error.code) {
@@ -51,6 +89,7 @@ class _LoginPageState extends State<LoginPage> {
         email: email,
         password: password,
       );
+      await _saveRememberedLogin(email);
     } on FirebaseAuthException catch (error) {
       if (!mounted) {
         return;
@@ -136,6 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                               enabled: !_isSigningIn,
                               keyboardType: TextInputType.emailAddress,
                               textInputAction: TextInputAction.next,
+                              autofillHints: const [AutofillHints.email],
                               decoration: InputDecoration(
                                 hintText: 'Enter your email',
                                 filled: true,
@@ -169,6 +209,7 @@ class _LoginPageState extends State<LoginPage> {
                               controller: _passwordController,
                               enabled: !_isSigningIn,
                               obscureText: true,
+                              autofillHints: const [AutofillHints.password],
                               decoration: InputDecoration(
                                 hintText: 'Enter your password',
                                 filled: true,

@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import 'course_schedule_utils.dart';
+
 class ScanAttendancePage extends StatefulWidget {
   const ScanAttendancePage({super.key});
 
@@ -23,7 +25,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
   late final AnimationController _scanLineController;
   late final AnimationController _successController;
   bool _isSaving = false;
-  String? _lastScannedValue;
   String? _statusMessage;
   Color _statusColor = const Color(0xFF20D6A1);
 
@@ -66,13 +67,12 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
     }
 
     final rawValue = capture.barcodes.first.rawValue?.trim();
-    if (rawValue == null || rawValue.isEmpty || rawValue == _lastScannedValue) {
+    if (rawValue == null || rawValue.isEmpty) {
       return;
     }
 
     setState(() {
       _isSaving = true;
-      _lastScannedValue = rawValue;
       _statusMessage = 'Saving attendance...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -131,42 +131,344 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
 
     final payload = _parseQrPayload(qrValue);
     final studentId = payload['studentId'] ?? qrValue;
-    final studentName = payload['name'] ?? studentId;
-    final classId = payload['classId'] ?? 'mathematics-10a';
-    final course = payload['course'] ?? classId;
-    final grade = payload['grade'] ?? '';
-    final studentEmail = payload['email'] ?? '';
     final qrTeacherUid = payload['teacherUid'] ?? '';
-    final courseId = payload['courseId'] ?? '';
-    final classFee = payload['classFee'] ?? '';
-    final classType = payload['classType'] ?? '';
-    final location = payload['location'] ?? '';
-    final dateKey = _dateKey(DateTime.now());
-    final documentId = '$dateKey-$studentId';
 
     if (qrTeacherUid.isNotEmpty && qrTeacherUid != teacher.uid) {
       throw StateError('This QR belongs to another teacher.');
     }
 
-    await scans.doc(documentId).set({
-      'studentId': studentId,
-      'studentName': studentName,
-      'studentEmail': studentEmail,
-      'grade': grade,
-      'courseId': courseId,
-      'course': course,
-      'classFee': classFee,
-      'classType': classType,
-      'location': location,
-      'classId': classId,
+    final studentSnapshot = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(studentId)
+        .get();
+    final studentData = studentSnapshot.data();
+    if (!studentSnapshot.exists || studentData == null) {
+      throw StateError('Student record not found.');
+    }
+    if (studentData['status']?.toString().toLowerCase() == 'archived') {
+      throw StateError('This student was removed.');
+    }
+
+    final student = _AttendanceStudent.fromFirestore(
+      id: studentSnapshot.id,
+      data: studentData,
+      payload: payload,
+    );
+
+    if (student.createdBy.isNotEmpty && student.createdBy != teacher.uid) {
+      throw StateError('This student belongs to another teacher.');
+    }
+
+    final teacherCourseDocs = await FirebaseFirestore.instance
+        .collection('teacher_courses')
+        .doc(teacher.uid)
+        .collection('courses')
+        .get();
+    final teacherCourses = teacherCourseDocs.docs
+        .map(_AttendanceCourseOption.fromCourseSnapshot)
+        .where((course) => course.status != 'archived')
+        .toList();
+    final now = DateTime.now();
+    final dateKey = _dateKey(now);
+    final todayCourses = _scheduledCoursesForToday(
+      student.courses,
+      teacherCourses,
+      now,
+    );
+    final todayScanSnapshot =
+        await scans.where('dateKey', isEqualTo: dateKey).get();
+    final presentStudentScans = todayScanSnapshot.docs
+        .map((document) => document.data())
+        .where((data) {
+          return _readString(data, 'studentId') == student.id &&
+              _isPresentAttendanceData(data);
+        })
+        .toList();
+    var classScheduledToday = todayCourses.isNotEmpty;
+    var scheduleOverride = false;
+    _AttendanceCourseOption? selectedCourse;
+
+    if (todayCourses.isNotEmpty) {
+      final unmarkedTodayCourses = _unmarkedAttendanceCourses(
+        courses: todayCourses,
+        presentScans: presentStudentScans,
+      );
+
+      if (unmarkedTodayCourses.isEmpty) {
+        throw StateError(
+          todayCourses.length == 1
+              ? _alreadyMarkedMessage(student, todayCourses.first)
+              : _allMarkedMessage(student),
+        );
+      }
+
+      selectedCourse = unmarkedTodayCourses.length == 1
+          ? unmarkedTodayCourses.first
+          : await _chooseAttendanceCourse(unmarkedTodayCourses);
+      if (selectedCourse == null) {
+        throw StateError('Attendance cancelled.');
+      }
+    } else {
+      final unmarkedStudentCourses = _unmarkedAttendanceCourses(
+        courses: student.courses,
+        presentScans: presentStudentScans,
+      );
+
+      if (unmarkedStudentCourses.isEmpty) {
+        throw StateError(_allMarkedMessage(student));
+      }
+
+      selectedCourse = unmarkedStudentCourses.length == 1
+          ? unmarkedStudentCourses.first
+          : await _chooseAttendanceCourse(unmarkedStudentCourses);
+      if (selectedCourse == null) {
+        throw StateError('Attendance cancelled.');
+      }
+
+      final shouldSave = await _confirmNoClassToday(student, selectedCourse);
+      if (!shouldSave) {
+        throw StateError('Attendance cancelled.');
+      }
+      classScheduledToday = false;
+      scheduleOverride = true;
+    }
+
+    final selectedAttendanceCourse = selectedCourse;
+
+    final courseKey = _safeKey(
+      selectedAttendanceCourse.id.isNotEmpty
+          ? selectedAttendanceCourse.id
+          : selectedAttendanceCourse.name,
+    );
+    final documentId = '$dateKey-$studentId-$courseKey';
+    final scanReference = scans.doc(documentId);
+    final attendanceData = {
+      'studentId': student.id,
+      'studentName': student.name,
+      'studentEmail': student.email,
+      'grade': selectedAttendanceCourse.grade,
+      'courseId': selectedAttendanceCourse.id,
+      'course': selectedAttendanceCourse.name,
+      'courseName': selectedAttendanceCourse.name,
+      'classFee': selectedAttendanceCourse.classFee,
+      'classType': selectedAttendanceCourse.type,
+      'location': selectedAttendanceCourse.location,
+      'classId': selectedAttendanceCourse.classId,
       'dateKey': dateKey,
+      'dateLabel': _dateLabel(now),
+      'timeLabel': _timeLabel(now),
       'qrValue': qrValue,
       'qrTeacherUid': qrTeacherUid,
+      'classScheduledToday': classScheduledToday,
+      'scheduleOverride': scheduleOverride,
+      'scheduleDays': selectedAttendanceCourse.scheduleDays,
+      'scheduleTime': selectedAttendanceCourse.scheduleTime,
+      'scheduleSlots':
+          selectedAttendanceCourse.scheduleSlots
+              .map((slot) => slot.toMap())
+              .toList(),
       'status': 'present',
       'teacherUid': teacher.uid,
       'scannedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+
+    await _ensureAttendanceIsNew(
+      scans: scans,
+      dateKey: dateKey,
+      student: student,
+      course: selectedAttendanceCourse,
+    );
+
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+      final existingScan = await transaction.get(scanReference);
+      final existingScanData = existingScan.data();
+      if (existingScan.exists &&
+          existingScanData != null &&
+          _isPresentAttendanceData(existingScanData)) {
+        throw StateError(
+          _alreadyMarkedMessage(student, selectedAttendanceCourse),
+        );
+      }
+
+      transaction.set(scanReference, attendanceData, SetOptions(merge: true));
+    });
+  }
+
+  List<_AttendanceCourseOption> _scheduledCoursesForToday(
+    List<_AttendanceCourseOption> studentCourses,
+    List<_AttendanceCourseOption> teacherCourses,
+    DateTime date,
+  ) {
+    final todayNames = {
+      _shortDayName(date).toLowerCase(),
+      _fullDayName(date).toLowerCase(),
+    };
+    final scheduledCourses = <_AttendanceCourseOption>[];
+
+    void addScheduled(_AttendanceCourseOption course) {
+      final exists = scheduledCourses.any(
+        (saved) => saved.matchKeys.any(course.matchKeys.contains),
+      );
+      if (!exists) {
+        scheduledCourses.add(course);
+      }
+    }
+
+    for (final studentCourse in studentCourses) {
+      for (final teacherCourse in teacherCourses) {
+        final sameCourse = studentCourse.matchKeys.any(
+          teacherCourse.matchKeys.contains,
+        );
+        if (!sameCourse || !teacherCourse.isScheduledOn(todayNames)) {
+          continue;
+        }
+
+        addScheduled(studentCourse.mergeSchedule(teacherCourse));
+      }
+    }
+
+    return scheduledCourses;
+  }
+
+  Future<_AttendanceCourseOption?> _chooseAttendanceCourse(
+    List<_AttendanceCourseOption> courses,
+  ) {
+    return showDialog<_AttendanceCourseOption>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Select today class'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: courses.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final course = courses[index];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(course.title),
+                  subtitle: Text(course.scheduleLabel),
+                  trailing: Text(course.feeLabel),
+                  onTap: () => Navigator.of(context).pop(course),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  List<_AttendanceCourseOption> _unmarkedAttendanceCourses({
+    required List<_AttendanceCourseOption> courses,
+    required List<Map<String, dynamic>> presentScans,
+  }) {
+    return courses.where((course) {
+      final alreadyMarked = presentScans.any(
+        (scanData) => _attendanceMatchesCourse(scanData, course),
+      );
+      return !alreadyMarked;
+    }).toList();
+  }
+
+  Future<void> _ensureAttendanceIsNew({
+    required CollectionReference<Map<String, dynamic>> scans,
+    required String dateKey,
+    required _AttendanceStudent student,
+    required _AttendanceCourseOption course,
+  }) async {
+    final snapshot = await scans.where('dateKey', isEqualTo: dateKey).get();
+    final alreadyMarked = snapshot.docs.any((document) {
+      final data = document.data();
+      return _readString(data, 'studentId') == student.id &&
+          _isPresentAttendanceData(data) &&
+          _attendanceMatchesCourse(data, course);
+    });
+
+    if (alreadyMarked) {
+      throw StateError(_alreadyMarkedMessage(student, course));
+    }
+  }
+
+  bool _attendanceMatchesCourse(
+    Map<String, dynamic> scanData,
+    _AttendanceCourseOption course,
+  ) {
+    final scanCourseId = _readString(scanData, 'courseId').toLowerCase();
+    final scanCourseName = _readString(
+      scanData,
+      'courseName',
+      _readString(scanData, 'course'),
+    ).toLowerCase();
+    final courseId = course.id.trim().toLowerCase();
+    final courseName = course.name.trim().toLowerCase();
+
+    if (scanCourseId.isNotEmpty &&
+        courseId.isNotEmpty &&
+        scanCourseId == courseId) {
+      return true;
+    }
+
+    return scanCourseName.isNotEmpty &&
+        courseName.isNotEmpty &&
+        scanCourseName == courseName;
+  }
+
+  bool _isPresentAttendanceData(Map<String, dynamic> data) {
+    return _readString(data, 'status', 'present').toLowerCase() == 'present';
+  }
+
+  String _alreadyMarkedMessage(
+    _AttendanceStudent student,
+    _AttendanceCourseOption course,
+  ) {
+    return '${student.name} අද ${course.title} class එකට attendance already marked.';
+  }
+
+  String _allMarkedMessage(_AttendanceStudent student) {
+    return '${student.name} අද classes ඔක්කොටම attendance mark කරලා තියෙන්නේ.';
+  }
+
+  Future<bool> _confirmNoClassToday(
+    _AttendanceStudent student,
+    _AttendanceCourseOption course,
+  ) async {
+    if (!mounted) {
+      return false;
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('No class today'),
+              content: Text(
+                '${student.name}ට අද "${course.title}" class එක schedule වෙලා නැහැ.\n\nAttendance එක save කරන්නද?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('No'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Take Attendance'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
   }
 
   Map<String, String> _parseQrPayload(String rawValue) {
@@ -245,7 +547,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
   Future<void> _handleManualEntry(String studentId) async {
     setState(() {
       _isSaving = true;
-      _lastScannedValue = null;
       _statusMessage = 'Saving manual attendance...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -383,6 +684,346 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       ),
     );
   }
+}
+
+class _AttendanceStudent {
+  const _AttendanceStudent({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.createdBy,
+    required this.courses,
+  });
+
+  final String id;
+  final String name;
+  final String email;
+  final String createdBy;
+  final List<_AttendanceCourseOption> courses;
+
+  factory _AttendanceStudent.fromFirestore({
+    required String id,
+    required Map<String, dynamic> data,
+    required Map<String, String> payload,
+  }) {
+    final courses = <_AttendanceCourseOption>[];
+
+    void addCourse(_AttendanceCourseOption course) {
+      final exists = courses.any(
+        (saved) => saved.matchKeys.any(course.matchKeys.contains),
+      );
+      if (!exists) {
+        courses.add(course);
+      }
+    }
+
+    void addCoursesFromField(String field) {
+      final value = data[field];
+      if (value is! Iterable) {
+        return;
+      }
+
+      for (final item in value) {
+        final course = _AttendanceCourseOption.tryParse(item);
+        if (course != null) {
+          addCourse(course);
+        }
+      }
+    }
+
+    addCoursesFromField('courses');
+    addCoursesFromField('enrolledCourses');
+    addCoursesFromField('studentCourses');
+    addCourse(
+      _AttendanceCourseOption(
+        id: _readString(data, 'courseId', payload['courseId'] ?? ''),
+        name: _readString(
+          data,
+          'course',
+          payload['course'] ?? payload['classId'] ?? 'Course',
+        ),
+        grade: _readString(data, 'grade', payload['grade'] ?? ''),
+        classId: _readString(data, 'classId', payload['classId'] ?? ''),
+        classFee: _readDouble(data, 'classFee') ??
+            double.tryParse(payload['classFee'] ?? '') ??
+            0,
+        type: _readString(data, 'classType', payload['classType'] ?? ''),
+        location: _readString(data, 'location', payload['location'] ?? ''),
+        scheduleDays: const [],
+        scheduleTime: '',
+        scheduleSlots: const [],
+        status: 'active',
+      ),
+    );
+
+    return _AttendanceStudent(
+      id: id,
+      name: _readString(data, 'name', payload['name'] ?? id),
+      email: _readString(data, 'email', payload['email'] ?? ''),
+      createdBy: _readString(data, 'createdBy', payload['teacherUid'] ?? ''),
+      courses: List.unmodifiable(courses),
+    );
+  }
+
+  _AttendanceCourseOption preferredCourse(Map<String, String> payload) {
+    final payloadCourseId = payload['courseId']?.trim().toLowerCase() ?? '';
+    final payloadCourseName = payload['course']?.trim().toLowerCase() ?? '';
+
+    for (final course in courses) {
+      if (payloadCourseId.isNotEmpty &&
+          course.id.trim().toLowerCase() == payloadCourseId) {
+        return course;
+      }
+      if (payloadCourseName.isNotEmpty &&
+          course.name.trim().toLowerCase() == payloadCourseName) {
+        return course;
+      }
+    }
+
+    return courses.isEmpty
+        ? _AttendanceCourseOption(
+            id: payload['courseId'] ?? '',
+            name: payload['course'] ?? payload['classId'] ?? 'Course',
+            grade: payload['grade'] ?? '',
+            classId: payload['classId'] ?? '',
+            classFee: double.tryParse(payload['classFee'] ?? '') ?? 0,
+            type: payload['classType'] ?? '',
+            location: payload['location'] ?? '',
+            scheduleDays: const [],
+            scheduleTime: '',
+            scheduleSlots: const [],
+            status: 'active',
+          )
+        : courses.first;
+  }
+}
+
+class _AttendanceCourseOption {
+  const _AttendanceCourseOption({
+    required this.id,
+    required this.name,
+    required this.grade,
+    required this.classId,
+    required this.classFee,
+    required this.type,
+    required this.location,
+    required this.scheduleDays,
+    required this.scheduleTime,
+    required this.scheduleSlots,
+    required this.status,
+  });
+
+  final String id;
+  final String name;
+  final String grade;
+  final String classId;
+  final double classFee;
+  final String type;
+  final String location;
+  final List<String> scheduleDays;
+  final String scheduleTime;
+  final List<CourseScheduleSlot> scheduleSlots;
+  final String status;
+
+  factory _AttendanceCourseOption.fromCourseSnapshot(
+    QueryDocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) {
+    final data = snapshot.data();
+    final slots = courseScheduleSlotsFromData(data);
+    final scheduleDays = _readStringList(data, 'scheduleDays');
+    return _AttendanceCourseOption(
+      id: snapshot.id,
+      name: _readString(data, 'name', 'Course'),
+      grade: _readString(data, 'grade', ''),
+      classId: _readString(data, 'classId', ''),
+      classFee: _readDouble(data, 'classFee') ?? 0,
+      type: _readString(data, 'type', _readString(data, 'classType', '')),
+      location: _readString(data, 'location', ''),
+      scheduleDays: scheduleDays.isNotEmpty
+          ? scheduleDays
+          : courseScheduleDaysFromSlots(slots),
+      scheduleTime: _readString(data, 'scheduleTime', ''),
+      scheduleSlots: slots,
+      status: _readString(data, 'status', 'active'),
+    );
+  }
+
+  static _AttendanceCourseOption? tryParse(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+
+    final data = <String, dynamic>{};
+    value.forEach((key, value) {
+      data[key.toString()] = value;
+    });
+    final name = _readString(data, 'name', _readString(data, 'course', ''));
+    final id = _readString(data, 'courseId', _readString(data, 'id', ''));
+
+    if (name.isEmpty && id.isEmpty) {
+      return null;
+    }
+
+    final slots = courseScheduleSlotsFromData(data);
+    final scheduleDays = _readStringList(data, 'scheduleDays');
+    return _AttendanceCourseOption(
+      id: id,
+      name: name.isEmpty ? 'Course' : name,
+      grade: _readString(data, 'grade', ''),
+      classId: _readString(data, 'classId', ''),
+      classFee: _readDouble(data, 'classFee') ??
+          _readDouble(data, 'amount') ??
+          _readDouble(data, 'fee') ??
+          0,
+      type: _readString(data, 'classType', _readString(data, 'type', '')),
+      location: _readString(data, 'location', ''),
+      scheduleDays: scheduleDays.isNotEmpty
+          ? scheduleDays
+          : courseScheduleDaysFromSlots(slots),
+      scheduleTime: _readString(data, 'scheduleTime', ''),
+      scheduleSlots: slots,
+      status: _readString(data, 'status', 'active'),
+    );
+  }
+
+  _AttendanceCourseOption mergeSchedule(_AttendanceCourseOption teacherCourse) {
+    return _AttendanceCourseOption(
+      id: id.isNotEmpty ? id : teacherCourse.id,
+      name: name.isNotEmpty ? name : teacherCourse.name,
+      grade: grade.isNotEmpty ? grade : teacherCourse.grade,
+      classId: classId.isNotEmpty ? classId : teacherCourse.classId,
+      classFee: classFee > 0 ? classFee : teacherCourse.classFee,
+      type: type.isNotEmpty ? type : teacherCourse.type,
+      location: location.isNotEmpty ? location : teacherCourse.location,
+      scheduleDays: teacherCourse.scheduleDays,
+      scheduleTime: teacherCourse.scheduleTime,
+      scheduleSlots: teacherCourse.scheduleSlots,
+      status: status.isNotEmpty ? status : teacherCourse.status,
+    );
+  }
+
+  bool isScheduledOn(Set<String> dayNames) {
+    final slotMatches = scheduleSlots
+        .map((slot) => slot.day.trim().toLowerCase())
+        .any(dayNames.contains);
+    return slotMatches ||
+        scheduleDays
+            .map((day) => day.trim().toLowerCase())
+            .any(dayNames.contains);
+  }
+
+  Set<String> get matchKeys {
+    final keys = <String>{};
+    final idKey = id.trim().toLowerCase();
+    final nameKey = name.trim().toLowerCase();
+
+    if (idKey.isNotEmpty) {
+      keys.add('id:$idKey');
+    }
+    if (nameKey.isNotEmpty) {
+      keys.add('name:$nameKey');
+    }
+
+    return keys;
+  }
+
+  String get title {
+    if (grade.isEmpty) {
+      return name;
+    }
+
+    return '$name • $grade';
+  }
+
+  String get feeLabel {
+    if (classFee <= 0) {
+      return 'No fee';
+    }
+
+    final hasCents = classFee.truncateToDouble() != classFee;
+    return 'Rs ${classFee.toStringAsFixed(hasCents ? 2 : 0)}';
+  }
+
+  String get scheduleLabel {
+    return courseScheduleLabel(
+      scheduleDays: scheduleDays,
+      scheduleTime: scheduleTime,
+      scheduleSlots: scheduleSlots,
+    );
+  }
+}
+
+String _safeKey(String value) {
+  final normalized = value
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+
+  return normalized.isEmpty ? 'course' : normalized;
+}
+
+String _shortDayName(DateTime date) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  return days[date.weekday - 1];
+}
+
+String _fullDayName(DateTime date) {
+  const days = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  return days[date.weekday - 1];
+}
+
+String _dateLabel(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '${date.year}-$month-$day';
+}
+
+String _timeLabel(DateTime date) {
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final period = date.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $period';
+}
+
+String _readString(
+  Map<String, dynamic> data,
+  String key,
+  [
+  String fallback = '',
+  ]
+) {
+  final value = data[key]?.toString().trim();
+  return value?.isNotEmpty == true ? value! : fallback;
+}
+
+double? _readDouble(Map<String, dynamic> data, String key) {
+  final value = data[key];
+  if (value is num) {
+    return value.toDouble();
+  }
+
+  return double.tryParse(value?.toString() ?? '');
+}
+
+List<String> _readStringList(Map<String, dynamic> data, String key) {
+  final value = data[key];
+  if (value is Iterable) {
+    return value
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  return const [];
 }
 
 class _ScannerFrame extends StatelessWidget {
@@ -671,7 +1312,9 @@ class _RecentScansPanel extends StatelessWidget {
                   );
                 }
 
-                final docs = snapshot.data?.docs ?? [];
+                final docs = (snapshot.data?.docs ?? [])
+                    .where((doc) => _isPresentScanData(doc.data()))
+                    .toList();
                 if (docs.isEmpty) {
                   return const _EmptyRecentScans(message: 'No scans yet.');
                 }
@@ -714,7 +1357,9 @@ class _TodayCountBadge extends StatelessWidget {
           .where('dateKey', isEqualTo: _dateKey(DateTime.now()))
           .snapshots(),
       builder: (context, snapshot) {
-        final count = snapshot.data?.size ?? 0;
+        final count = (snapshot.data?.docs ?? [])
+            .where((doc) => _isPresentScanData(doc.data()))
+            .length;
         return _CountBadge(label: 'Today: $count');
       },
     );
@@ -747,6 +1392,10 @@ class _CountBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _isPresentScanData(Map<String, dynamic> data) {
+  return data['status']?.toString().toLowerCase() == 'present';
 }
 
 class _EmptyRecentScans extends StatelessWidget {

@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +47,20 @@ class _StudentsPageState extends State<StudentsPage> {
         .collection('teacher_courses')
         .doc(teacher.uid)
         .collection('courses')
+        .snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>>? get _paymentsStream {
+    final teacher = FirebaseAuth.instance.currentUser;
+    if (teacher == null) {
+      return null;
+    }
+
+    return FirebaseFirestore.instance
+        .collection('teacher_payments')
+        .doc(teacher.uid)
+        .collection('payments')
+        .where('monthKey', isEqualTo: _monthKey(DateTime.now()))
         .snapshots();
   }
 
@@ -108,6 +122,58 @@ class _StudentsPageState extends State<StudentsPage> {
     }).toList();
   }
 
+  Map<String, Set<String>> _paidCourseKeysByStudent(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> paymentDocs,
+  ) {
+    final paymentsByStudent = <String, Set<String>>{};
+
+    for (final paymentDoc in paymentDocs) {
+      final data = paymentDoc.data();
+      if (!_isActivePaidPayment(data)) {
+        continue;
+      }
+
+      final studentId = _readString(data, 'studentId', '');
+      if (studentId.isEmpty) {
+        continue;
+      }
+
+      final keys = _paymentMatchKeys(data);
+      if (keys.isEmpty) {
+        continue;
+      }
+
+      paymentsByStudent.putIfAbsent(studentId, () => <String>{}).addAll(keys);
+    }
+
+    return paymentsByStudent;
+  }
+
+  String _paymentStatusForStudent(
+    _StudentProfile student,
+    Set<String> paidCourseKeys,
+  ) {
+    final courseKeys = student.courseKeys;
+    if (courseKeys.isEmpty) {
+      return '';
+    }
+
+    var paidCourseCount = 0;
+    for (final keys in courseKeys) {
+      if (keys.any(paidCourseKeys.contains)) {
+        paidCourseCount++;
+      }
+    }
+
+    if (paidCourseCount <= 0) {
+      return 'due';
+    }
+    if (paidCourseCount >= courseKeys.length) {
+      return 'paid';
+    }
+    return 'partial';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -146,7 +212,7 @@ class _StudentsPageState extends State<StudentsPage> {
                       icon: Icons.lock_outline_rounded,
                       title: 'Teacher login needed',
                       message:
-                          'Students බලන්න teacher account එකෙන් login වෙන්න.',
+                          'Students à¶¶à¶½à¶±à·Šà¶± teacher account à¶‘à¶šà·™à¶±à·Š login à·€à·™à¶±à·Šà¶±.',
                     );
                   }
 
@@ -166,49 +232,45 @@ class _StudentsPageState extends State<StudentsPage> {
                         );
                       }
 
-                      final students = (snapshot.data?.docs ?? [])
+                      final rawStudents = (snapshot.data?.docs ?? [])
                           .map(_StudentProfile.fromSnapshot)
                           .where((student) => student.role == 'student')
                           .where(
                             (student) =>
                                 student.status.toLowerCase() != 'archived',
                           )
-                          .toList()
-                        ..sort((first, second) =>
-                            first.name.compareTo(second.name));
-                      final filteredStudents = _filterStudents(students);
+                          .toList();
+                      final paymentsStream = _paymentsStream;
 
-                      if (filteredStudents.isEmpty) {
-                        return _StudentsMessage(
-                          icon: Icons.people_alt_outlined,
-                          title: students.isEmpty
-                              ? 'තවම students නැහැ'
-                              : 'Student කෙනෙක් හමු උනේ නැහැ',
-                          message: students.isEmpty
-                              ? '+ button එකෙන් පළවෙනි student register කරන්න.'
-                              : 'Search text හෝ course filter එක වෙනස් කරන්න.',
+                      if (paymentsStream == null) {
+                        return _StudentList(
+                          students: rawStudents,
+                          filterStudents: _filterStudents,
                         );
                       }
 
-                      return ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
-                        itemCount: filteredStudents.length,
-                        separatorBuilder: (_, __) => const Divider(
-                          height: 1,
-                          color: Color(0xFFE7ECF5),
-                        ),
-                        itemBuilder: (context, index) {
-                          final student = filteredStudents[index];
-                          return _StudentTile(
-                            student: student,
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      StudentDetailPage(studentId: student.id),
+                      return StreamBuilder<
+                          QuerySnapshot<Map<String, dynamic>>>(
+                        stream: paymentsStream,
+                        builder: (context, paymentsSnapshot) {
+                          final paymentsByStudent = _paidCourseKeysByStudent(
+                            paymentsSnapshot.data?.docs ?? [],
+                          );
+                          final students = rawStudents
+                              .map(
+                                (student) => student.withPaymentStatus(
+                                  _paymentStatusForStudent(
+                                    student,
+                                    paymentsByStudent[student.id] ??
+                                        const <String>{},
+                                  ),
                                 ),
-                              );
-                            },
+                              )
+                              .toList();
+
+                          return _StudentList(
+                            students: students,
+                            filterStudents: _filterStudents,
                           );
                         },
                       );
@@ -221,6 +283,57 @@ class _StudentsPageState extends State<StudentsPage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _StudentList extends StatelessWidget {
+  const _StudentList({
+    required this.students,
+    required this.filterStudents,
+  });
+
+  final List<_StudentProfile> students;
+  final List<_StudentProfile> Function(List<_StudentProfile>) filterStudents;
+
+  @override
+  Widget build(BuildContext context) {
+    final sortedStudents = [...students]
+      ..sort((first, second) => first.name.compareTo(second.name));
+    final filteredStudents = filterStudents(sortedStudents);
+
+    if (filteredStudents.isEmpty) {
+      return _StudentsMessage(
+        icon: Icons.people_alt_outlined,
+        title: sortedStudents.isEmpty
+            ? 'තවම students නැහැ'
+            : 'Student කෙනෙක් හමු උනේ නැහැ',
+        message: sortedStudents.isEmpty
+            ? '+ button එකෙන් පළවෙනි student register කරන්න.'
+            : 'Search text හෝ course filter එක වෙනස් කරන්න.',
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
+      itemCount: filteredStudents.length,
+      separatorBuilder: (_, __) => const Divider(
+        height: 1,
+        color: Color(0xFFE7ECF5),
+      ),
+      itemBuilder: (context, index) {
+        final student = filteredStudents[index];
+        return _StudentTile(
+          student: student,
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => StudentDetailPage(studentId: student.id),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -270,7 +383,7 @@ class _StudentsTopBar extends StatelessWidget {
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Subject chips වලින් filter කරන්න.'),
+                  content: Text('Subject chips à·€à¶½à·’à¶±à·Š filter à¶šà¶»à¶±à·Šà¶±.'),
                 ),
               );
             },
@@ -715,7 +828,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
 
       setState(() {
         _errorMessage = error.code == 'permission-denied'
-            ? 'Firestore permission denied. Rules වල users create permission දෙන්න.'
+            ? 'Firestore permission denied. Rules à·€à¶½ users create permission à¶¯à·™à¶±à·Šà¶±.'
             : 'Firebase error: ${error.message ?? error.code}';
       });
     } catch (_) {
@@ -726,7 +839,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
       }
 
       setState(() {
-        _errorMessage = 'Student account create කරන්න බැරි උනා.';
+        _errorMessage = 'Student account create à¶šà¶»à¶±à·Šà¶± à¶¶à·à¶»à·’ à¶‹à¶±à·.';
       });
     } finally {
       await registrationAuth?.signOut();
@@ -748,13 +861,13 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   String _authErrorMessage(FirebaseAuthException error) {
     switch (error.code) {
       case 'email-already-in-use':
-        return 'මේ email එකෙන් account එකක් දැනටම තියෙනවා.';
+        return 'à¶¸à·š email à¶‘à¶šà·™à¶±à·Š account à¶‘à¶šà¶šà·Š à¶¯à·à¶±à¶§à¶¸ à¶­à·’à¶ºà·™à¶±à·€à·.';
       case 'invalid-email':
-        return 'Email address එක valid නැහැ.';
+        return 'Email address à¶‘à¶š valid à¶±à·à·„à·.';
       case 'weak-password':
-        return 'Password එක තව ටිකක් strong කරන්න.';
+        return 'Password à¶‘à¶š à¶­à·€ à¶§à·’à¶šà¶šà·Š strong à¶šà¶»à¶±à·Šà¶±.';
       case 'network-request-failed':
-        return 'Internet connection එක check කරලා ආයෙ try කරන්න.';
+        return 'Internet connection à¶‘à¶š check à¶šà¶»à¶½à· à¶†à¶ºà·™ try à¶šà¶»à¶±à·Šà¶±.';
       default:
         return 'Firebase Auth error: ${error.message ?? error.code}';
     }
@@ -763,7 +876,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   String? _validateName(String? value) {
     final name = value?.trim() ?? '';
     if (name.length < 2) {
-      return 'Student name එක දාන්න.';
+      return 'Student name à¶‘à¶š à¶¯à·à¶±à·Šà¶±.';
     }
     return null;
   }
@@ -772,7 +885,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
     final email = value?.trim() ?? '';
     final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
     if (!emailPattern.hasMatch(email)) {
-      return 'Valid email එකක් දාන්න.';
+      return 'Valid email à¶‘à¶šà¶šà·Š à¶¯à·à¶±à·Šà¶±.';
     }
     return null;
   }
@@ -781,14 +894,14 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
     final mobile = value?.trim() ?? '';
     final digits = mobile.replaceAll(RegExp(r'[^0-9+]'), '');
     if (digits.length < 9) {
-      return 'Valid mobile number එකක් දාන්න.';
+      return 'Valid mobile number à¶‘à¶šà¶šà·Š à¶¯à·à¶±à·Šà¶±.';
     }
     return null;
   }
 
   String? _validateRequired(String? value, String label) {
     if ((value ?? '').trim().isEmpty) {
-      return '$label එක දාන්න.';
+      return '$label à¶‘à¶š à¶¯à·à¶±à·Šà¶±.';
     }
     return null;
   }
@@ -796,21 +909,21 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   String? _validateGrade(String? value) {
     final grade = value?.trim() ?? '';
     if (grade.isEmpty) {
-      return 'Grade එක දාන්න.';
+      return 'Grade à¶‘à¶š à¶¯à·à¶±à·Šà¶±.';
     }
     return null;
   }
 
   String? _validateCourse(String? value) {
     if (value == null || value.isEmpty) {
-      return 'Course එකක් select කරන්න.';
+      return 'Course à¶‘à¶šà¶šà·Š select à¶šà¶»à¶±à·Šà¶±.';
     }
     return null;
   }
 
   String? _validatePassword(String? value) {
     if ((value ?? '').length < 6) {
-      return 'Password characters 6කට වැඩි වෙන්න ඕන.';
+      return 'Password characters 6à¶šà¶§ à·€à·à¶©à·’ à·€à·™à¶±à·Šà¶± à¶•à¶±.';
     }
     return null;
   }
@@ -947,7 +1060,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Name, email, mobile numbers, address, school, course, password දාන්න. Password එක Firestore එකේ save වෙන්නේ නැහැ.',
+                  'Name, email, mobile numbers, address, school, course, password à¶¯à·à¶±à·Šà¶±. Password à¶‘à¶š Firestore à¶‘à¶šà·š save à·€à·™à¶±à·Šà¶±à·š à¶±à·à·„à·.',
                   style: TextStyle(
                     color: Color(0xFF6C7892),
                     fontSize: 13,
@@ -1339,8 +1452,63 @@ class _TeacherCourse {
       feeLabel,
     ];
 
-    return parts.join(' • ');
+    return parts.join(' â€¢ ');
   }
+}
+
+String _monthKey(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  return '${date.year}-$month';
+}
+
+String _readString(
+  Map<String, dynamic> data,
+  String key, [
+  String fallback = '',
+]) {
+  final value = data[key]?.toString().trim();
+  return value?.isNotEmpty == true ? value! : fallback;
+}
+
+String _safeKey(String value) {
+  return value.trim().toLowerCase();
+}
+
+Set<String> _courseMatchKeys(Map<String, dynamic> data) {
+  final keys = <String>{};
+
+  void addValue(String value) {
+    final key = _safeKey(value);
+    if (key.isNotEmpty) {
+      keys.add(key);
+    }
+  }
+
+  addValue(_readString(data, 'id'));
+  addValue(_readString(data, 'courseId'));
+  addValue(_readString(data, 'name'));
+  addValue(_readString(data, 'course'));
+
+  return keys;
+}
+
+Set<String> _paymentMatchKeys(Map<String, dynamic> data) {
+  return _courseMatchKeys({
+    'courseId': _readString(data, 'courseId'),
+    'name': _readString(
+      data,
+      'courseName',
+      _readString(data, 'course'),
+    ),
+  });
+}
+
+bool _isActivePaidPayment(Map<String, dynamic> data) {
+  final status = _readString(data, 'status', 'paid').toLowerCase();
+  return status != 'archived' &&
+      status != 'deleted' &&
+      status != 'cancelled' &&
+      status != 'pending';
 }
 
 class _StudentProfile {
@@ -1356,6 +1524,8 @@ class _StudentProfile {
     required this.course,
     required this.role,
     required this.status,
+    required this.courseKeys,
+    this.paymentStatus = '',
   });
 
   final String id;
@@ -1369,6 +1539,8 @@ class _StudentProfile {
   final String course;
   final String role;
   final String status;
+  final List<Set<String>> courseKeys;
+  final String paymentStatus;
 
   factory _StudentProfile.fromSnapshot(
     QueryDocumentSnapshot<Map<String, dynamic>> snapshot,
@@ -1396,6 +1568,25 @@ class _StudentProfile {
       course: _courseSummary(data, fallbackCourse),
       role: _readString(data, 'role', 'student'),
       status: _readString(data, 'status', 'active'),
+      courseKeys: _courseKeys(data, fallbackCourse),
+    );
+  }
+
+  _StudentProfile withPaymentStatus(String paymentStatus) {
+    return _StudentProfile(
+      id: id,
+      name: name,
+      email: email,
+      studentMobile: studentMobile,
+      parentMobile: parentMobile,
+      address: address,
+      school: school,
+      grade: grade,
+      course: course,
+      role: role,
+      status: status,
+      courseKeys: courseKeys,
+      paymentStatus: paymentStatus,
     );
   }
 
@@ -1465,6 +1656,61 @@ class _StudentProfile {
     return names.isEmpty ? fallback : names.join(', ');
   }
 
+  static List<Set<String>> _courseKeys(
+    Map<String, dynamic> data,
+    String fallbackCourse,
+  ) {
+    final courseKeys = <Set<String>>[];
+
+    void addKeys(Set<String> keys) {
+      if (keys.isEmpty) {
+        return;
+      }
+
+      final alreadyAdded = courseKeys.any(
+        (existing) => existing.any(keys.contains),
+      );
+      if (!alreadyAdded) {
+        courseKeys.add(keys);
+      }
+    }
+
+    void addFromField(String field) {
+      final value = data[field];
+      if (value is! Iterable) {
+        return;
+      }
+
+      for (final item in value) {
+        if (item is! Map) {
+          continue;
+        }
+
+        final courseData = <String, dynamic>{};
+        item.forEach((key, value) {
+          courseData[key.toString()] = value;
+        });
+        addKeys(_courseMatchKeys(courseData));
+      }
+    }
+
+    addFromField('courses');
+    addFromField('enrolledCourses');
+    addFromField('studentCourses');
+    addKeys(
+      _courseMatchKeys({
+        'id': _readString(data, 'courseId', ''),
+        'name': _readString(data, 'course', fallbackCourse),
+      }),
+    );
+
+    return List.unmodifiable(courseKeys);
+  }
+
+  String get effectiveStatus {
+    return paymentStatus.trim().isNotEmpty ? paymentStatus : status;
+  }
+
   String get subtitle {
     final details = <String>[
       if (grade.isNotEmpty) grade,
@@ -1473,7 +1719,7 @@ class _StudentProfile {
     ];
 
     if (details.isNotEmpty) {
-      return details.join(' • ');
+      return details.join(' â€¢ ');
     }
 
     return email.isEmpty ? id : email;
@@ -1499,9 +1745,11 @@ class _StudentProfile {
   Color get avatarBackground => avatarColor.withOpacity(0.12);
 
   String get statusLabel {
-    switch (status.toLowerCase()) {
+    switch (effectiveStatus.toLowerCase()) {
       case 'paid':
         return 'Paid';
+      case 'partial':
+        return 'Partial';
       case 'due':
         return 'Due';
       case 'overdue':
@@ -1514,7 +1762,9 @@ class _StudentProfile {
   }
 
   Color get statusColor {
-    switch (status.toLowerCase()) {
+    switch (effectiveStatus.toLowerCase()) {
+      case 'partial':
+        return const Color(0xFF316DFF);
       case 'due':
         return const Color(0xFFFF526B);
       case 'overdue':
@@ -1525,7 +1775,9 @@ class _StudentProfile {
   }
 
   Color get statusBackground {
-    switch (status.toLowerCase()) {
+    switch (effectiveStatus.toLowerCase()) {
+      case 'partial':
+        return const Color(0xFFEAF0FF);
       case 'due':
         return const Color(0xFFFFEEF1);
       case 'overdue':

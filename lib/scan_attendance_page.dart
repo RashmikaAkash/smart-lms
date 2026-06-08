@@ -25,7 +25,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
   late final AnimationController _scanLineController;
   late final AnimationController _successController;
   bool _isSaving = false;
-  String? _lastScannedValue;
   String? _statusMessage;
   Color _statusColor = const Color(0xFF20D6A1);
 
@@ -68,13 +67,12 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
     }
 
     final rawValue = capture.barcodes.first.rawValue?.trim();
-    if (rawValue == null || rawValue.isEmpty || rawValue == _lastScannedValue) {
+    if (rawValue == null || rawValue.isEmpty) {
       return;
     }
 
     setState(() {
       _isSaving = true;
-      _lastScannedValue = rawValue;
       _statusMessage = 'Saving attendance...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -97,7 +95,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       }
 
       setState(() {
-        _lastScannedValue = null;
         _statusMessage = error.code == 'permission-denied'
             ? 'Permission denied. Check Firestore rules.'
             : 'Firebase error: ${error.message ?? error.code}';
@@ -109,7 +106,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       }
 
       setState(() {
-        _lastScannedValue = null;
         _statusMessage =
             error is StateError ? error.message : 'Could not save attendance.';
         _statusColor = const Color(0xFFFF526B);
@@ -179,45 +175,85 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       teacherCourses,
       now,
     );
+    final todayScanSnapshot =
+        await scans.where('dateKey', isEqualTo: dateKey).get();
+    final presentStudentScans = todayScanSnapshot.docs
+        .map((document) => document.data())
+        .where((data) {
+          return _readString(data, 'studentId') == student.id &&
+              _isPresentAttendanceData(data);
+        })
+        .toList();
     var classScheduledToday = todayCourses.isNotEmpty;
     var scheduleOverride = false;
     _AttendanceCourseOption? selectedCourse;
 
-    if (todayCourses.length == 1) {
-      selectedCourse = todayCourses.first;
-    } else if (todayCourses.length > 1) {
-      selectedCourse = await _chooseAttendanceCourse(todayCourses);
+    if (todayCourses.isNotEmpty) {
+      final unmarkedTodayCourses = _unmarkedAttendanceCourses(
+        courses: todayCourses,
+        presentScans: presentStudentScans,
+      );
+
+      if (unmarkedTodayCourses.isEmpty) {
+        throw StateError(
+          todayCourses.length == 1
+              ? _alreadyMarkedMessage(student, todayCourses.first)
+              : _allMarkedMessage(student),
+        );
+      }
+
+      selectedCourse = unmarkedTodayCourses.length == 1
+          ? unmarkedTodayCourses.first
+          : await _chooseAttendanceCourse(unmarkedTodayCourses);
       if (selectedCourse == null) {
         throw StateError('Attendance cancelled.');
       }
     } else {
-      selectedCourse = student.preferredCourse(payload);
+      final unmarkedStudentCourses = _unmarkedAttendanceCourses(
+        courses: student.courses,
+        presentScans: presentStudentScans,
+      );
+
+      if (unmarkedStudentCourses.isEmpty) {
+        throw StateError(_allMarkedMessage(student));
+      }
+
+      selectedCourse = unmarkedStudentCourses.length == 1
+          ? unmarkedStudentCourses.first
+          : await _chooseAttendanceCourse(unmarkedStudentCourses);
+      if (selectedCourse == null) {
+        throw StateError('Attendance cancelled.');
+      }
+
       final shouldSave = await _confirmNoClassToday(student, selectedCourse);
       if (!shouldSave) {
-        await _cancelTodayAttendanceForStudent(scans, dateKey, student.id);
         throw StateError('Attendance cancelled.');
       }
       classScheduledToday = false;
       scheduleOverride = true;
     }
 
+    final selectedAttendanceCourse = selectedCourse;
+
     final courseKey = _safeKey(
-      selectedCourse.id.isNotEmpty ? selectedCourse.id : selectedCourse.name,
+      selectedAttendanceCourse.id.isNotEmpty
+          ? selectedAttendanceCourse.id
+          : selectedAttendanceCourse.name,
     );
     final documentId = '$dateKey-$studentId-$courseKey';
-
-    await scans.doc(documentId).set({
+    final scanReference = scans.doc(documentId);
+    final attendanceData = {
       'studentId': student.id,
       'studentName': student.name,
       'studentEmail': student.email,
-      'grade': selectedCourse.grade,
-      'courseId': selectedCourse.id,
-      'course': selectedCourse.name,
-      'courseName': selectedCourse.name,
-      'classFee': selectedCourse.classFee,
-      'classType': selectedCourse.type,
-      'location': selectedCourse.location,
-      'classId': selectedCourse.classId,
+      'grade': selectedAttendanceCourse.grade,
+      'courseId': selectedAttendanceCourse.id,
+      'course': selectedAttendanceCourse.name,
+      'courseName': selectedAttendanceCourse.name,
+      'classFee': selectedAttendanceCourse.classFee,
+      'classType': selectedAttendanceCourse.type,
+      'location': selectedAttendanceCourse.location,
+      'classId': selectedAttendanceCourse.classId,
       'dateKey': dateKey,
       'dateLabel': _dateLabel(now),
       'timeLabel': _timeLabel(now),
@@ -225,15 +261,38 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
       'qrTeacherUid': qrTeacherUid,
       'classScheduledToday': classScheduledToday,
       'scheduleOverride': scheduleOverride,
-      'scheduleDays': selectedCourse.scheduleDays,
-      'scheduleTime': selectedCourse.scheduleTime,
+      'scheduleDays': selectedAttendanceCourse.scheduleDays,
+      'scheduleTime': selectedAttendanceCourse.scheduleTime,
       'scheduleSlots':
-          selectedCourse.scheduleSlots.map((slot) => slot.toMap()).toList(),
+          selectedAttendanceCourse.scheduleSlots
+              .map((slot) => slot.toMap())
+              .toList(),
       'status': 'present',
       'teacherUid': teacher.uid,
       'scannedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+    };
+
+    await _ensureAttendanceIsNew(
+      scans: scans,
+      dateKey: dateKey,
+      student: student,
+      course: selectedAttendanceCourse,
+    );
+
+    await FirebaseFirestore.instance.runTransaction((transaction) async {
+      final existingScan = await transaction.get(scanReference);
+      final existingScanData = existingScan.data();
+      if (existingScan.exists &&
+          existingScanData != null &&
+          _isPresentAttendanceData(existingScanData)) {
+        throw StateError(
+          _alreadyMarkedMessage(student, selectedAttendanceCourse),
+        );
+      }
+
+      transaction.set(scanReference, attendanceData, SetOptions(merge: true));
+    });
   }
 
   List<_AttendanceCourseOption> _scheduledCoursesForToday(
@@ -309,6 +368,76 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
     );
   }
 
+  List<_AttendanceCourseOption> _unmarkedAttendanceCourses({
+    required List<_AttendanceCourseOption> courses,
+    required List<Map<String, dynamic>> presentScans,
+  }) {
+    return courses.where((course) {
+      final alreadyMarked = presentScans.any(
+        (scanData) => _attendanceMatchesCourse(scanData, course),
+      );
+      return !alreadyMarked;
+    }).toList();
+  }
+
+  Future<void> _ensureAttendanceIsNew({
+    required CollectionReference<Map<String, dynamic>> scans,
+    required String dateKey,
+    required _AttendanceStudent student,
+    required _AttendanceCourseOption course,
+  }) async {
+    final snapshot = await scans.where('dateKey', isEqualTo: dateKey).get();
+    final alreadyMarked = snapshot.docs.any((document) {
+      final data = document.data();
+      return _readString(data, 'studentId') == student.id &&
+          _isPresentAttendanceData(data) &&
+          _attendanceMatchesCourse(data, course);
+    });
+
+    if (alreadyMarked) {
+      throw StateError(_alreadyMarkedMessage(student, course));
+    }
+  }
+
+  bool _attendanceMatchesCourse(
+    Map<String, dynamic> scanData,
+    _AttendanceCourseOption course,
+  ) {
+    final scanCourseId = _readString(scanData, 'courseId').toLowerCase();
+    final scanCourseName = _readString(
+      scanData,
+      'courseName',
+      _readString(scanData, 'course'),
+    ).toLowerCase();
+    final courseId = course.id.trim().toLowerCase();
+    final courseName = course.name.trim().toLowerCase();
+
+    if (scanCourseId.isNotEmpty &&
+        courseId.isNotEmpty &&
+        scanCourseId == courseId) {
+      return true;
+    }
+
+    return scanCourseName.isNotEmpty &&
+        courseName.isNotEmpty &&
+        scanCourseName == courseName;
+  }
+
+  bool _isPresentAttendanceData(Map<String, dynamic> data) {
+    return _readString(data, 'status', 'present').toLowerCase() == 'present';
+  }
+
+  String _alreadyMarkedMessage(
+    _AttendanceStudent student,
+    _AttendanceCourseOption course,
+  ) {
+    return '${student.name} අද ${course.title} class එකට attendance already marked.';
+  }
+
+  String _allMarkedMessage(_AttendanceStudent student) {
+    return '${student.name} අද classes ඔක්කොටම attendance mark කරලා තියෙන්නේ.';
+  }
+
   Future<bool> _confirmNoClassToday(
     _AttendanceStudent student,
     _AttendanceCourseOption course,
@@ -340,34 +469,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
           },
         ) ??
         false;
-  }
-
-  Future<void> _cancelTodayAttendanceForStudent(
-    CollectionReference<Map<String, dynamic>> scans,
-    String dateKey,
-    String studentId,
-  ) async {
-    final snapshot = await scans.where('dateKey', isEqualTo: dateKey).get();
-    final batch = FirebaseFirestore.instance.batch();
-    var updateCount = 0;
-
-    for (final document in snapshot.docs) {
-      final data = document.data();
-      if (data['studentId']?.toString() != studentId) {
-        continue;
-      }
-
-      batch.update(document.reference, {
-        'status': 'cancelled',
-        'cancelledAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      updateCount++;
-    }
-
-    if (updateCount > 0) {
-      await batch.commit();
-    }
   }
 
   Map<String, String> _parseQrPayload(String rawValue) {
@@ -446,7 +547,6 @@ class _ScanAttendancePageState extends State<ScanAttendancePage>
   Future<void> _handleManualEntry(String studentId) async {
     setState(() {
       _isSaving = true;
-      _lastScannedValue = null;
       _statusMessage = 'Saving manual attendance...';
       _statusColor = const Color(0xFF4E7BFF);
     });
@@ -897,7 +997,9 @@ String _timeLabel(DateTime date) {
 String _readString(
   Map<String, dynamic> data,
   String key,
-  String fallback,
+  [
+  String fallback = '',
+  ]
 ) {
   final value = data[key]?.toString().trim();
   return value?.isNotEmpty == true ? value! : fallback;

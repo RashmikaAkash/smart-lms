@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -16,8 +16,6 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   bool _darkMode = false;
-  bool _pushNotifications = true;
-  bool _settingsLoaded = false;
   String _languageCode = 'en';
 
   String get _teacherUid => FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -56,10 +54,6 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _applySettings(Map<String, dynamic> data) {
-    if (_settingsLoaded) {
-      return;
-    }
-
     final settings = data['settings'];
     if (!data.containsKey('settings')) {
       return;
@@ -67,11 +61,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (settings is Map) {
       _darkMode = settings['darkMode'] == true;
-      _pushNotifications = settings['pushNotifications'] != false;
-      final language = settings['language']?.toString().trim();
-      _languageCode = language == 'si' ? 'si' : 'en';
+      _languageCode = 'en';
     }
-    _settingsLoaded = true;
   }
 
   Future<void> _updateSetting(String key, Object value) async {
@@ -92,147 +83,8 @@ class _ProfilePageState extends State<ProfilePage> {
     return _isSinhala ? sinhala : english;
   }
 
-  Future<void> _openLanguageSheet() async {
-    var selectedLanguage = _languageCode;
-    var isSaving = false;
-    String? errorMessage;
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> saveLanguage(String languageCode) async {
-              setSheetState(() {
-                selectedLanguage = languageCode;
-                isSaving = true;
-                errorMessage = null;
-              });
-
-              try {
-                await _updateSetting('language', languageCode);
-
-                if (!mounted) {
-                  return;
-                }
-
-                setState(() {
-                  _languageCode = languageCode;
-                });
-
-                if (context.mounted) {
-                  Navigator.of(context).pop();
-                }
-
-                _showSnack(
-                  languageCode == 'si'
-                      ? 'භාෂාව සිංහලට මාරු කළා.'
-                      : 'Language changed to English.',
-                );
-              } on FirebaseException catch (error) {
-                setSheetState(() {
-                  errorMessage = error.code == 'permission-denied'
-                      ? 'Firestore permission denied. Language setting rules check කරන්න.'
-                      : 'Firebase error: ${error.message ?? error.code}';
-                });
-              } catch (_) {
-                setSheetState(() {
-                  errorMessage = _text(
-                    'Could not save language setting.',
-                    'භාෂා සැකසුම save කරන්න බැරි වුණා.',
-                  );
-                });
-              } finally {
-                if (context.mounted) {
-                  setSheetState(() {
-                    isSaving = false;
-                  });
-                }
-              }
-            }
-
-            return Container(
-              padding: const EdgeInsets.fromLTRB(22, 14, 22, 24),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD8DFEC),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    _text('Choose Language', 'භාෂාව තෝරන්න'),
-                    style: const TextStyle(
-                      color: Color(0xFF071B3C),
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _text(
-                      'This preference is saved to your teacher account.',
-                      'මේ සැකසුම teacher account එකට save වෙනවා.',
-                    ),
-                    style: const TextStyle(
-                      color: Color(0xFF6C7892),
-                      fontSize: 13,
-                      height: 1.35,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  _LanguageOptionTile(
-                    title: 'English',
-                    subtitle: 'Use English labels',
-                    isSelected: selectedLanguage == 'en',
-                    isSaving: isSaving,
-                    onTap: () => saveLanguage('en'),
-                  ),
-                  const SizedBox(height: 10),
-                  _LanguageOptionTile(
-                    title: 'සිංහල',
-                    subtitle: 'Sinhala labels භාවිතා කරන්න',
-                    isSelected: selectedLanguage == 'si',
-                    isSaving: isSaving,
-                    onTap: () => saveLanguage('si'),
-                  ),
-                  if (errorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      errorMessage!,
-                      style: const TextStyle(
-                        color: Color(0xFFD9233F),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
   Future<void> _openEditProfileSheet(_TeacherProfile profile) async {
     final nameController = TextEditingController(text: profile.name);
-    final titleController = TextEditingController(text: profile.title);
     final formKey = GlobalKey<FormState>();
     var isSaving = false;
     String? errorMessage;
@@ -256,7 +108,6 @@ class _ProfilePageState extends State<ProfilePage> {
 
               try {
                 final name = nameController.text.trim();
-                final title = titleController.text.trim();
                 final teacherDoc = _teacherDoc;
                 final user = FirebaseAuth.instance.currentUser;
 
@@ -267,7 +118,6 @@ class _ProfilePageState extends State<ProfilePage> {
                 await user.updateDisplayName(name);
                 await teacherDoc.set({
                   'name': name,
-                  'title': title,
                   'role': 'teacher',
                   'email': user.email ?? profile.email,
                   'updatedAt': FieldValue.serverTimestamp(),
@@ -279,14 +129,14 @@ class _ProfilePageState extends State<ProfilePage> {
               } on FirebaseException catch (error) {
                 setSheetState(() {
                   errorMessage = error.code == 'permission-denied'
-                      ? 'Firestore permission denied. Profile update rules check කරන්න.'
+                      ? 'Firestore permission denied. Profile update rules check à¶šà¶»à¶±à·Šà¶±.'
                       : 'Firebase error: ${error.message ?? error.code}';
                 });
               } catch (_) {
                 setSheetState(() {
                   errorMessage = _text(
                     'Could not update profile.',
-                    'පැතිකඩ update කරන්න බැරි උනා.',
+                    'à¶´à·à¶­à·’à¶šà¶© update à¶šà¶»à¶±à·Šà¶± à¶¶à·à¶»à·’ à¶‹à¶±à·.',
                   );
                 });
               } finally {
@@ -326,7 +176,7 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        _text('Edit Profile', 'පැතිකඩ වෙනස් කරන්න'),
+                        _text('Edit Profile', 'à¶´à·à¶­à·’à¶šà¶© à·€à·™à¶±à·ƒà·Š à¶šà¶»à¶±à·Šà¶±'),
                         style: const TextStyle(
                           color: Color(0xFF071B3C),
                           fontSize: 22,
@@ -341,23 +191,14 @@ class _ProfilePageState extends State<ProfilePage> {
                           if ((value ?? '').trim().length < 2) {
                             return _text(
                               'Enter a valid name.',
-                              'නිවැරදි නමක් දාන්න.',
+                              'à¶±à·’à·€à·à¶»à¶¯à·’ à¶±à¶¸à¶šà·Š à¶¯à·à¶±à·Šà¶±.',
                             );
                           }
                           return null;
                         },
                         decoration: _sheetInputDecoration(
-                          label: _text('Name', 'නම'),
+                          label: _text('Name', 'à¶±à¶¸'),
                           icon: Icons.person_outline_rounded,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: titleController,
-                        textInputAction: TextInputAction.done,
-                        decoration: _sheetInputDecoration(
-                          label: _text('Title', 'තනතුර'),
-                          icon: Icons.badge_outlined,
                         ),
                       ),
                       if (errorMessage != null) ...[
@@ -393,7 +234,7 @@ class _ProfilePageState extends State<ProfilePage> {
                             : Text(
                                 _text(
                                   'Save Profile',
-                                  'පැතිකඩ save කරන්න',
+                                  'à¶´à·à¶­à·’à¶šà¶© save à¶šà¶»à¶±à·Šà¶±',
                                 ),
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w900,
@@ -411,7 +252,6 @@ class _ProfilePageState extends State<ProfilePage> {
     );
 
     nameController.dispose();
-    titleController.dispose();
   }
 
   InputDecoration _sheetInputDecoration({
@@ -454,7 +294,7 @@ class _ProfilePageState extends State<ProfilePage> {
       return const _ProfileMessage(
         icon: Icons.lock_outline_rounded,
         title: 'Teacher login needed',
-        message: 'Profile බලන්න teacher account එකෙන් login වෙන්න.',
+        message: 'Profile à¶¶à¶½à¶±à·Šà¶± teacher account à¶‘à¶šà·™à¶±à·Š login à·€à·™à¶±à·Šà¶±.',
       );
     }
 
@@ -493,17 +333,17 @@ class _ProfilePageState extends State<ProfilePage> {
                           profile: profile,
                           studentCount: studentCount,
                           courseCount: courseCount,
-                          rating: '4.9',
+                          messages: '0',
                           isSinhala: _isSinhala,
                         ),
                         const SizedBox(height: 12),
-                        _SectionLabel(_text('ACCOUNT', 'ගිණුම')),
+                        _SectionLabel(_text('ACCOUNT', 'à¶œà·’à¶«à·”à¶¸')),
                         _ProfileMenuTile(
                           icon: Icons.badge_outlined,
                           iconColor: const Color(0xFF316DFF),
                           label: _text(
                             'Edit Profile',
-                            'පැතිකඩ වෙනස් කරන්න',
+                            'à¶´à·à¶­à·’à¶šà¶© à·€à·™à¶±à·ƒà·Š à¶šà¶»à¶±à·Šà¶±',
                           ),
                           onTap: () => _openEditProfileSheet(profile),
                         ),
@@ -511,11 +351,14 @@ class _ProfilePageState extends State<ProfilePage> {
                         _ProfileMenuTile(
                           icon: Icons.notifications_none_rounded,
                           iconColor: const Color(0xFF7B2FF2),
-                          label: _text('Notifications', 'දැනුම්දීම්'),
+                          label: _text(
+                            'Notification Settings',
+                            'à¶¯à·à¶±à·”à¶¸à·Šà¶¯à·“à¶¸à·Š à·ƒà·à¶šà·ƒà·”à¶¸à·Š',
+                          ),
                           onTap: () => _showSnack(
                             _text(
                               'Notifications coming soon.',
-                              'දැනුම්දීම් ඉක්මනින් එනවා.',
+                              'à¶¯à·à¶±à·”à¶¸à·Šà¶¯à·“à¶¸à·Š à¶‰à¶šà·Šà¶¸à¶±à·’à¶±à·Š à¶‘à¶±à·€à·.',
                             ),
                           ),
                         ),
@@ -523,20 +366,20 @@ class _ProfilePageState extends State<ProfilePage> {
                         _ProfileMenuTile(
                           icon: Icons.security_rounded,
                           iconColor: const Color(0xFF00B979),
-                          label: _text('Security', 'ආරක්ෂාව'),
+                          label: _text('Security', 'à¶†à¶»à¶šà·Šà·‚à·à·€'),
                           onTap: () => _showSnack(
                             _text(
                               'Security settings coming soon.',
-                              'ආරක්ෂක සැකසුම් ඉක්මනින් එනවා.',
+                              'à¶†à¶»à¶šà·Šà·‚à¶š à·ƒà·à¶šà·ƒà·”à¶¸à·Š à¶‰à¶šà·Šà¶¸à¶±à·’à¶±à·Š à¶‘à¶±à·€à·.',
                             ),
                           ),
                         ),
                         const SizedBox(height: 14),
-                        _SectionLabel(_text('PREFERENCES', 'කැමැත්ත')),
+                        _SectionLabel(_text('PREFERENCES', 'à¶šà·à¶¸à·à¶­à·Šà¶­')),
                         _SwitchTile(
                           icon: Icons.dark_mode_outlined,
                           iconColor: const Color(0xFFFF9500),
-                          label: _text('Dark Mode', 'අඳුරු මාදිලිය'),
+                          label: _text('Dark Mode', 'à¶…à¶³à·”à¶»à·” à¶¸à·à¶¯à·’à¶½à·’à¶º'),
                           value: _darkMode,
                           onChanged: (value) async {
                             setState(() {
@@ -554,7 +397,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               _showSnack(
                                 _text(
                                   'Could not save dark mode setting.',
-                                  'අඳුරු මාදිලි සැකසුම save කරන්න බැරි වුණා.',
+                                  'à¶…à¶³à·”à¶»à·” à¶¸à·à¶¯à·’à¶½à·’ à·ƒà·à¶šà·ƒà·”à¶¸ save à¶šà¶»à¶±à·Šà¶± à¶¶à·à¶»à·’ à·€à·”à¶«à·.',
                                 ),
                               );
                             }
@@ -564,48 +407,16 @@ class _ProfilePageState extends State<ProfilePage> {
                         _ProfileMenuTile(
                           icon: Icons.language_rounded,
                           iconColor: const Color(0xFF316DFF),
-                          label: _languageCode == 'si'
-                              ? 'භාෂාව — සිංහල'
-                              : 'Language — English',
-                          onTap: _openLanguageSheet,
-                        ),
-                        const SizedBox(height: 8),
-                        _SwitchTile(
-                          icon: Icons.notifications_active_outlined,
-                          iconColor: const Color(0xFF00B979),
-                          label: _text(
-                            'Push Notifications',
-                            'Push දැනුම්දීම්',
+                          label: 'Language — English',
+                          onTap: () => _showSnack(
+                            'Language change coming soon. English only for now.',
                           ),
-                          value: _pushNotifications,
-                          activeColor: const Color(0xFF20C997),
-                          onChanged: (value) async {
-                            setState(() {
-                              _pushNotifications = value;
-                            });
-                            try {
-                              await _updateSetting('pushNotifications', value);
-                            } catch (_) {
-                              if (!mounted) {
-                                return;
-                              }
-                              setState(() {
-                                _pushNotifications = !value;
-                              });
-                              _showSnack(
-                                _text(
-                                  'Could not save notification setting.',
-                                  'දැනුම්දීම් සැකසුම save කරන්න බැරි වුණා.',
-                                ),
-                              );
-                            }
-                          },
                         ),
                         const SizedBox(height: 12),
                         OutlinedButton.icon(
                           onPressed: () => FirebaseAuth.instance.signOut(),
                           icon: const Icon(Icons.logout_rounded),
-                          label: Text(_text('Sign Out', 'ඉවත් වන්න')),
+                          label: Text(_text('Sign Out', 'à¶‰à·€à¶­à·Š à·€à¶±à·Šà¶±')),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFFFF3B4E),
                             side: const BorderSide(color: Color(0xFFFF7A88)),
@@ -651,116 +462,19 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-class _LanguageOptionTile extends StatelessWidget {
-  const _LanguageOptionTile({
-    required this.title,
-    required this.subtitle,
-    required this.isSelected,
-    required this.isSaving,
-    required this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final bool isSelected;
-  final bool isSaving;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: isSelected ? const Color(0xFFEAF0FF) : const Color(0xFFF8FAFF),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: isSaving ? null : onTap,
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isSelected
-                  ? const Color(0xFF316DFF)
-                  : const Color(0xFFE2E8F4),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFF316DFF) : Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  title.trim().isEmpty
-                      ? '?'
-                      : title.trim().substring(0, 1).toUpperCase(),
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : const Color(0xFF316DFF),
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Color(0xFF071B3C),
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: Color(0xFF6C7892),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isSaving && isSelected)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2.2),
-                )
-              else if (isSelected)
-                const Icon(
-                  Icons.check_circle_rounded,
-                  color: Color(0xFF316DFF),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ProfileHeader extends StatelessWidget {
   const _ProfileHeader({
     required this.profile,
     required this.studentCount,
     required this.courseCount,
-    required this.rating,
+    required this.messages,
     required this.isSinhala,
   });
 
   final _TeacherProfile profile;
   final int studentCount;
   final int courseCount;
-  final String rating;
+  final String messages;
   final bool isSinhala;
 
   @override
@@ -825,17 +539,17 @@ class _ProfileHeader extends StatelessWidget {
             children: [
               _HeaderStat(
                 value: '$studentCount',
-                label: isSinhala ? 'සිසුන්' : 'Students',
+                label: isSinhala ? 'à·ƒà·’à·ƒà·”à¶±à·Š' : 'Students',
               ),
               const _HeaderDivider(),
               _HeaderStat(
                 value: '$courseCount',
-                label: isSinhala ? 'පාඨමාලා' : 'Courses',
+                label: isSinhala ? 'à¶´à·à¶¨à¶¸à·à¶½à·' : 'Courses',
               ),
               const _HeaderDivider(),
               _HeaderStat(
-                value: rating,
-                label: isSinhala ? 'අගය' : 'Rating',
+                value: messages,
+                label: isSinhala ? 'à¶´à¶«à·’à·€à·’à¶©' : 'Messages',
               ),
             ],
           ),
@@ -974,7 +688,6 @@ class _SwitchTile extends StatelessWidget {
     required this.label,
     required this.value,
     required this.onChanged,
-    this.activeColor = const Color(0xFFFF9500),
   });
 
   final IconData icon;
@@ -982,7 +695,6 @@ class _SwitchTile extends StatelessWidget {
   final String label;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final Color activeColor;
 
   @override
   Widget build(BuildContext context) {
@@ -1010,7 +722,7 @@ class _SwitchTile extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: activeColor,
+            activeColor: const Color(0xFFFF9500),
           ),
         ],
       ),
@@ -1107,7 +819,7 @@ class _TeacherProfile {
     return _TeacherProfile(
       name: _readString(data, 'name', user?.displayName ?? fallbackName),
       email: email,
-      title: _readString(data, 'title', 'Teacher • Smart LMS'),
+      title: _readString(data, 'title', 'Teacher â€¢ Smart LMS'),
     );
   }
 
@@ -1126,3 +838,4 @@ class _TeacherProfile {
     return letters.isEmpty ? 'T' : letters.toUpperCase();
   }
 }
+

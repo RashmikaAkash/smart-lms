@@ -1588,9 +1588,20 @@ class _ScheduleEditorSheetState extends State<_ScheduleEditorSheet> {
                   ),
                 ),
                 const SizedBox(height: 18),
-                Text(
-                  widget.course.title,
-                  style: const TextStyle(
+                _CourseDetailHero(
+                  course: widget.course,
+                  studentCount: widget.studentCount,
+                ),
+                const SizedBox(height: 12),
+                _CourseQuickActionStrip(
+                  onMaterialPressed: _openMaterialUploadSheet,
+                  onQuizPressed: _openQuizCreator,
+                  onAssignmentPressed: _openAssignmentCreator,
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Course Settings',
+                  style: TextStyle(
                     color: Color(0xFF071B3C),
                     fontSize: 22,
                     fontWeight: FontWeight.w900,
@@ -1777,6 +1788,13 @@ class _ScheduleEditorSheetState extends State<_ScheduleEditorSheet> {
                   ),
                 ),
                 const SizedBox(height: 22),
+                const _CourseContentHeader(
+                  icon: Icons.dashboard_customize_rounded,
+                  title: 'Course Workspace',
+                  subtitle:
+                      'Students, live links, materials, quizzes and assignments.',
+                ),
+                const SizedBox(height: 10),
                 _CourseStudentsSection(course: widget.course),
                 const SizedBox(height: 16),
                 _CourseLiveClassesSection(course: widget.course),
@@ -1800,6 +1818,306 @@ class _ScheduleEditorSheetState extends State<_ScheduleEditorSheet> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CourseDetailHero extends StatelessWidget {
+  const _CourseDetailHero({
+    required this.course,
+    required this.studentCount,
+  });
+
+  final _CourseData course;
+  final int studentCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF1D5BEA),
+            Color(0xFF7048E8),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF316DFF).withOpacity(0.18),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Icon(
+                  Icons.menu_book_rounded,
+                  color: Colors.white,
+                  size: 30,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      course.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      course.scheduleLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _CourseSummaryChip(
+                icon: Icons.groups_2_outlined,
+                label: '$studentCount Students',
+              ),
+              _CourseSummaryChip(
+                icon: Icons.payments_outlined,
+                label: course.feeLabel,
+              ),
+              _CourseSummaryChip(
+                icon: Icons.category_outlined,
+                label: course.typeLabel,
+              ),
+              if (course.location.isNotEmpty)
+                _CourseSummaryChip(
+                  icon: Icons.location_on_outlined,
+                  label: course.location,
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CourseSummaryChip extends StatelessWidget {
+  const _CourseSummaryChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 15, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CourseQuickActionStrip extends StatelessWidget {
+  const _CourseQuickActionStrip({
+    required this.onMaterialPressed,
+    required this.onQuizPressed,
+    required this.onAssignmentPressed,
+  });
+
+  final VoidCallback onMaterialPressed;
+  final VoidCallback onQuizPressed;
+  final VoidCallback onAssignmentPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _CourseQuickActionButton(
+            icon: Icons.cloud_upload_outlined,
+            label: 'Material',
+            color: const Color(0xFF316DFF),
+            onTap: onMaterialPressed,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CourseQuickActionButton(
+            icon: Icons.quiz_outlined,
+            label: 'Quiz',
+            color: const Color(0xFF7048E8),
+            onTap: onQuizPressed,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _CourseQuickActionButton(
+            icon: Icons.assignment_outlined,
+            label: 'Task',
+            color: const Color(0xFFFF9500),
+            onTap: onAssignmentPressed,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CourseQuickActionButton extends StatelessWidget {
+  const _CourseQuickActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: color.withOpacity(0.22)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CourseContentHeader extends StatelessWidget {
+  const _CourseContentHeader({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEAF0FF),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Icon(icon, color: const Color(0xFF316DFF), size: 20),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFF071B3C),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF66748F),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

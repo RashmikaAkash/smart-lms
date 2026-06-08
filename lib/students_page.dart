@@ -95,6 +95,10 @@ class _StudentsPageState extends State<StudentsPage> {
       final matchesSearch = query.isEmpty ||
           student.name.toLowerCase().contains(query) ||
           student.email.toLowerCase().contains(query) ||
+          student.studentMobile.toLowerCase().contains(query) ||
+          student.parentMobile.toLowerCase().contains(query) ||
+          student.address.toLowerCase().contains(query) ||
+          student.school.toLowerCase().contains(query) ||
           student.grade.toLowerCase().contains(query) ||
           student.course.toLowerCase().contains(query);
       final matchesCourse = _selectedCourse == 'All' ||
@@ -165,6 +169,10 @@ class _StudentsPageState extends State<StudentsPage> {
                       final students = (snapshot.data?.docs ?? [])
                           .map(_StudentProfile.fromSnapshot)
                           .where((student) => student.role == 'student')
+                          .where(
+                            (student) =>
+                                student.status.toLowerCase() != 'archived',
+                          )
                           .toList()
                         ..sort((first, second) =>
                             first.name.compareTo(second.name));
@@ -513,6 +521,11 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _studentMobileController =
+      TextEditingController();
+  final TextEditingController _parentMobileController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _schoolController = TextEditingController();
   final TextEditingController _gradeController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
@@ -528,6 +541,10 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
+    _studentMobileController.dispose();
+    _parentMobileController.dispose();
+    _addressController.dispose();
+    _schoolController.dispose();
     _gradeController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -588,6 +605,10 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
 
       final name = _nameController.text.trim();
       final email = _emailController.text.trim();
+      final studentMobile = _studentMobileController.text.trim();
+      final parentMobile = _parentMobileController.text.trim();
+      final address = _addressController.text.trim();
+      final school = _schoolController.text.trim();
       final grade = selectedCourse.grade;
       final course = selectedCourse.name;
       final password = _passwordController.text;
@@ -603,6 +624,19 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
       }
 
       final classId = buildStudentClassId(course);
+      final courseData = {
+        'id': selectedCourse.id,
+        'courseId': selectedCourse.id,
+        'name': course,
+        'course': course,
+        'grade': grade,
+        'classId': classId,
+        'classFee': selectedCourse.classFee,
+        'type': selectedCourse.type,
+        'classType': selectedCourse.type,
+        'location': selectedCourse.location,
+        'status': 'active',
+      };
       final qrPayload = buildStudentQrPayload(
         studentId: studentUser.uid,
         name: name,
@@ -614,6 +648,10 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         classFee: selectedCourse.classFee,
         classType: selectedCourse.type,
         location: selectedCourse.location,
+        studentMobile: studentMobile,
+        parentMobile: parentMobile,
+        address: address,
+        school: school,
       );
 
       await studentUser.updateDisplayName(name);
@@ -625,14 +663,24 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
         'studentId': studentUser.uid,
         'name': name,
         'email': email,
+        'studentMobile': studentMobile,
+        'studentPhone': studentMobile,
+        'parentMobile': parentMobile,
+        'parentPhone': parentMobile,
+        'address': address,
+        'school': school,
         'grade': grade,
         'courseId': selectedCourse.id,
         'course': course,
         'subject': course,
         'classId': classId,
         'classFee': selectedCourse.classFee,
+        'totalClassFee': selectedCourse.classFee,
         'classType': selectedCourse.type,
         'location': selectedCourse.location,
+        'courseIds': [selectedCourse.id],
+        'courses': [courseData],
+        'enrolledCourses': [courseData],
         'qrPayload': qrPayload,
         'qrVersion': 1,
         'role': 'student',
@@ -725,6 +773,22 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
     final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
     if (!emailPattern.hasMatch(email)) {
       return 'Valid email එකක් දාන්න.';
+    }
+    return null;
+  }
+
+  String? _validateMobile(String? value) {
+    final mobile = value?.trim() ?? '';
+    final digits = mobile.replaceAll(RegExp(r'[^0-9+]'), '');
+    if (digits.length < 9) {
+      return 'Valid mobile number එකක් දාන්න.';
+    }
+    return null;
+  }
+
+  String? _validateRequired(String? value, String label) {
+    if ((value ?? '').trim().isEmpty) {
+      return '$label එක දාන්න.';
     }
     return null;
   }
@@ -883,7 +947,7 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
                 ),
                 const SizedBox(height: 6),
                 const Text(
-                  'Name, email, grade, course, password දාන්න. Password එක Firestore එකේ save වෙන්නේ නැහැ.',
+                  'Name, email, mobile numbers, address, school, course, password දාන්න. Password එක Firestore එකේ save වෙන්නේ නැහැ.',
                   style: TextStyle(
                     color: Color(0xFF6C7892),
                     fontSize: 13,
@@ -910,6 +974,48 @@ class _RegisterStudentSheetState extends State<_RegisterStudentSheet> {
                   decoration: _inputDecoration(
                     label: 'Email',
                     icon: Icons.email_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _studentMobileController,
+                  keyboardType: TextInputType.phone,
+                  textInputAction: TextInputAction.next,
+                  validator: _validateMobile,
+                  decoration: _inputDecoration(
+                    label: 'Student mobile number',
+                    icon: Icons.phone_android_rounded,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _parentMobileController,
+                  keyboardType: TextInputType.phone,
+                  textInputAction: TextInputAction.next,
+                  validator: _validateMobile,
+                  decoration: _inputDecoration(
+                    label: 'Parent mobile number',
+                    icon: Icons.phone_in_talk_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _addressController,
+                  textInputAction: TextInputAction.next,
+                  validator: (value) => _validateRequired(value, 'Address'),
+                  decoration: _inputDecoration(
+                    label: 'Student address',
+                    icon: Icons.home_outlined,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _schoolController,
+                  textInputAction: TextInputAction.next,
+                  validator: (value) => _validateRequired(value, 'School'),
+                  decoration: _inputDecoration(
+                    label: 'School',
+                    icon: Icons.school_outlined,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -1242,6 +1348,10 @@ class _StudentProfile {
     required this.id,
     required this.name,
     required this.email,
+    required this.studentMobile,
+    required this.parentMobile,
+    required this.address,
+    required this.school,
     required this.grade,
     required this.course,
     required this.role,
@@ -1251,6 +1361,10 @@ class _StudentProfile {
   final String id;
   final String name;
   final String email;
+  final String studentMobile;
+  final String parentMobile;
+  final String address;
+  final String school;
   final String grade;
   final String course;
   final String role;
@@ -1266,8 +1380,20 @@ class _StudentProfile {
       id: snapshot.id,
       name: _readString(data, 'name', 'Unnamed Student'),
       email: _readString(data, 'email', ''),
+      studentMobile: _readString(
+        data,
+        'studentMobile',
+        _readString(data, 'studentPhone', ''),
+      ),
+      parentMobile: _readString(
+        data,
+        'parentMobile',
+        _readString(data, 'parentPhone', ''),
+      ),
+      address: _readString(data, 'address', ''),
+      school: _readString(data, 'school', ''),
       grade: _readString(data, 'grade', ''),
-      course: _readString(data, 'course', fallbackCourse),
+      course: _courseSummary(data, fallbackCourse),
       role: _readString(data, 'role', 'student'),
       status: _readString(data, 'status', 'active'),
     );
@@ -1282,9 +1408,67 @@ class _StudentProfile {
     return value?.isNotEmpty == true ? value! : fallback;
   }
 
+  static String _courseSummary(
+    Map<String, dynamic> data,
+    String fallback,
+  ) {
+    final names = <String>[];
+
+    void addName(String value) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) {
+        return;
+      }
+
+      final exists = names.any(
+        (name) => name.toLowerCase() == normalized.toLowerCase(),
+      );
+      if (!exists) {
+        names.add(normalized);
+      }
+    }
+
+    void addFromField(String field) {
+      final value = data[field];
+      if (value is! Iterable) {
+        return;
+      }
+
+      for (final item in value) {
+        if (item is! Map) {
+          continue;
+        }
+
+        final courseData = <String, dynamic>{};
+        item.forEach((key, value) {
+          courseData[key.toString()] = value;
+        });
+
+        addName(
+          _readString(
+            courseData,
+            'name',
+            _readString(courseData, 'course', ''),
+          ),
+        );
+      }
+    }
+
+    addFromField('courses');
+    addFromField('enrolledCourses');
+    addFromField('studentCourses');
+
+    if (names.isEmpty) {
+      addName(_readString(data, 'course', fallback));
+    }
+
+    return names.isEmpty ? fallback : names.join(', ');
+  }
+
   String get subtitle {
     final details = <String>[
       if (grade.isNotEmpty) grade,
+      if (school.isNotEmpty) school,
       if (course.isNotEmpty && course != 'General') course,
     ];
 

@@ -21,6 +21,10 @@ String buildStudentQrPayload({
   double? classFee,
   String? classType,
   String? location,
+  String? studentMobile,
+  String? parentMobile,
+  String? address,
+  String? school,
 }) {
   return jsonEncode({
     'type': 'smart_lms_student',
@@ -35,5 +39,11 @@ String buildStudentQrPayload({
     if (classFee != null) 'classFee': classFee,
     if (classType != null && classType.isNotEmpty) 'classType': classType,
     if (location != null && location.isNotEmpty) 'location': location,
+    if (studentMobile != null && studentMobile.isNotEmpty)
+      'studentMobile': studentMobile,
+    if (parentMobile != null && parentMobile.isNotEmpty)
+      'parentMobile': parentMobile,
+    if (address != null && address.isNotEmpty) 'address': address,
+    if (school != null && school.isNotEmpty) 'school': school,
   });
 }
